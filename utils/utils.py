@@ -5,6 +5,8 @@
 import subprocess
 import os
 import sys
+import inspect
+from logger import Logger
 
 
 def trimComment(filePath):
@@ -15,7 +17,7 @@ def trimComment(filePath):
 	p = subprocess.Popen([trimCommentShell, filePath], stdout=subprocess.PIPE)
 	stdout, stderr = p.communicate()
 	if p.returncode != 0:
-		Logger().error('Fail to trim comments, file: "%s"' % f['path'])
+		Logger().error('Fail to trim comments, file: "%s"' % filePath)
 		Logger().info(stderr)
 	return stdout
 #end of func:trimComment
@@ -24,7 +26,7 @@ def trimComment(filePath):
 def valueOrNoneFromDictWithKeys(dic, keys):
 	values = []
 	for k in keys:
-		if dic.has_key(k):
+		if k in dic:
 			values.append(dic[k])
 		else:
 			values.append(None)
@@ -38,6 +40,16 @@ def pathForShell(cmd):
 		return stdout.split('\n')[0]
 	return None
 #end of func:pathForShell
+
+
+def __line__():
+	caller = inspect.stack()[1]
+	return int(caller[2])
+
+
+def __function__():
+	caller = inspect.stack()[1]
+	return caller[3]
 
 
 

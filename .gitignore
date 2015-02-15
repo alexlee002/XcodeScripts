@@ -1,0 +1,13 @@
+#ignore some files
+.DS_Store
+Pods
+*.pyc
+
+
+#ignore tmp file
+xcuserdata
+*.xcuserdatad
+autoGen
+DerivedData
+.svn
+xcshareddata
