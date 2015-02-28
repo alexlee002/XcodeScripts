@@ -14,7 +14,7 @@ def trimComment(filePath):
 	if not os.path.isfile(trimCommentShell):
 		Logger().error('File "%s" not exists!' % trimCommentShell)
 		sys.exit(1)
-	p = subprocess.Popen([trimCommentShell, filePath], stdout=subprocess.PIPE)
+	p = subprocess.Popen(['sh', trimCommentShell, filePath], stdout=subprocess.PIPE)
 	stdout, stderr = p.communicate()
 	if p.returncode != 0:
 		Logger().error('Fail to trim comments, file: "%s"' % filePath)
@@ -33,6 +33,10 @@ def valueOrNoneFromDictWithKeys(dic, keys):
 	return tuple(values)
 
 
+def extractObjectFromDictForKey(dic, key):
+	return dic[key] if key in dic else None
+
+
 def pathForShell(cmd):
 	p = subprocess.Popen(['whereis', cmd], stdout=subprocess.PIPE)
 	stdout, stderr = p.communicate()
@@ -40,6 +44,26 @@ def pathForShell(cmd):
 		return stdout.split('\n')[0]
 	return None
 #end of func:pathForShell
+
+
+def isSubPathOf(path, ancestor):
+	if not path or not ancestor:
+		return False
+	path = str(path)
+	ancestor = str(ancestor)
+	if path == ancestor:
+		return True
+	if not ancestor[-1:] == '/':
+		ancestor = ancestor + '/'
+	return path[:len(ancestor)] == ancestor
+
+
+def stringHasSubfix(string, subfix):
+	return string[-len(subfix):] == subfix
+
+
+def stringHasPrefix(string, prefix):
+	return string[0:len(prefix)] == prefix
 
 
 def __line__():
@@ -50,8 +74,3 @@ def __line__():
 def __function__():
 	caller = inspect.stack()[1]
 	return caller[3]
-
-
-
-
-

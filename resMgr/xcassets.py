@@ -20,6 +20,7 @@ myModulePath = os.path.join(os.path.dirname(__file__), "..")
 if not myModulePath in sys.path:
 	sys.path.append(myModulePath)
 
+import utils
 from utils.logger import Logger
 from utils.constants import MergeMode
 from utils.constants import IdiomType
@@ -64,7 +65,7 @@ class ImageModel(object):
 			dic['filename'] = self.canonicalFileName()
 		if self.scale:
 			dic['scale'] = self.scale
-		if self.subtype == '-480h':
+		if self.subtype == '-568h':
 			dic['subtype'] = 'retina4'
 		if self.resizing:
 			dic['resizing'] = self.resizing
@@ -108,11 +109,16 @@ class ImageModel(object):
 				idiom = IdiomType.UNIVERSAL
 		#filter special chars
 		if name:
-			name = urllib.unquote(name)
-			name = re.sub('[^\w\d_]', '_', name)
-			while name.find('__') > 0:
-				name = name.replace('__', '_')
+			name = ImageModel.canonicalImageNameWitName(name)
 		return (name, scale, idiom, ext, sliceImage, subtype)
+
+	@staticmethod
+	def canonicalImageNameWitName(name):
+		name = urllib.unquote(name)
+		name = re.sub('[^\w\d_]', '_', name)
+		while name.find('__') > 0:
+			name = name.replace('__', '_')
+		return name
 
 	@staticmethod
 	def imageModeFromDict(dic):
@@ -605,13 +611,8 @@ class ResizingImage(object):
 
 if __name__ == '__main__':
 	Logger().info('Hello, welcome!')
-	#XCAssets('').makeImagesets('')
-	#print 'match name:%s' % ImageModel.fileNameWithAttributes(('*', '2x', 'ipad', '.*', None, None))
-	#dic = ResizingImage('/Users/baidu/workspace/github/MCLogTest/popup_bg_1.9.png').slicingInfo()
-	#var_dump(dic)
-
 	if len(sys.argv) > 1:
 		if sys.argv[1] == 'make':
-			XCAssets('/Users/baidu/workspace/test/xcassets-test').makeImagesets('/Users/baidu/workspace/test/images')
+			XCAssets('/Users/baidu/workspace/test/xcassets-test').makeImagesets('/Users/baidu/workspace/github/BeeFramework/projects/example/example/view_iPhone/resource/img')
 		elif sys.argv[1] == 'build':
 			XCAssets('/Users/baidu/workspace/test/xcassets-test').buildImagesets()

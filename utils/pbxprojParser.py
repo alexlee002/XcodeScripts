@@ -7,6 +7,9 @@ import sys
 import subprocess
 import json
 
+from logger import Logger
+
+
 class XCProject(object):
 	def __init__(self, project_path):
 		super(XCProject, self).__init__()
@@ -25,71 +28,73 @@ class XCProject(object):
 			sys.exit(1)
 
 		self.json = json.loads(stdout)
-		self.rootObjectID = str(self.childrenWithKeyPathAtNode(['rootObject']))
-		mainGroupPath = self.childrenWithKeyPathAtNode(['objects', self.rootObjectID, 'projectDirPath'])
-		if mainGroupPath == None:
+		self.rootObjectID = str(self.childrenWithKeyPathAtNode(('rootObject',)))
+		mainGroupPath = self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'projectDirPath'))
+		if mainGroupPath is None:
 			mainGroupPath = ''
-		self.completeObjectsPath(str(self.childrenWithKeyPathAtNode(['objects', self.rootObjectID, 'mainGroup'])), mainGroupPath)
+		self.completeObjectsPath(str(self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'mainGroup'))), mainGroupPath)
 
-
-	def getfiles(self, args={'sourceTree':'<group>'}):
+	def getfiles(self, args={'sourceTree': '<group>'}):
 		args['isa'] = 'PBXFileReference'
 		return self.getObjects(args)
-		
 
 	def getObjects(self, args={}):
 		objects = [o for o in self.json['objects'].values()]
+
 		def checkObject(o):
 			for k in args.keys():
-				matches = o.has_key(k) and o[k] == args[k]
+				matches = k in o and o[k] == args[k]
 				if not matches:
 					return False
 			return True
-					
 		return filter(checkObject, objects)
 
-
-	def productName(self):
-		targets = self.childrenWithKeyPathAtNode(['objects', self.rootObjectID, 'targets'])
+	def productName(self, target):
+		targets = self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'targets'))
 		for target in targets:
-			if self.childrenWithKeyPathAtNode(['objects', self.rootObjectID, 'attributes', 'TargetAttributes', str(target)]):
-				return str(self.childrenWithKeyPathAtNode(['objects', str(target), 'productName']))
+			if self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'attributes', 'TargetAttributes', str(target))):
+				return str(self.childrenWithKeyPathAtNode(('objects', str(target), 'productName')))
 		return None
 
+	def organizationName(self):
+		name = self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'attributes', 'ORGANIZATIONNAME'))
+		return name if name else ''
+
 	def projectClassPrefix(self):
-		projPrefix = self.childrenWithKeyPathAtNode(['objects', self.rootObjectID, 'attributes', 'CLASSPREFIX'])
+		projPrefix = self.childrenWithKeyPathAtNode(('objects', self.rootObjectID, 'attributes', 'CLASSPREFIX'))
 		if not projPrefix:
 			projPrefix = 'MYAPP'
 		return projPrefix.upper()
 
-
-
 	def completeObjectsPath(self, parentID, parentPath, groups=''):
-		parent = self.childrenWithKeyPathAtNode(['objects', parentID])
-		if parent.has_key('path'):
-			if parent.has_key('sourceTree') and parent['sourceTree'] == '<group>':
+		parent = self.childrenWithKeyPathAtNode(('objects', parentID))
+		if not parent:
+			Logger().error('key:"objects" in object:%s' % parentID)
+			sys.exit(1)
+		if 'path' in parent:
+			if 'sourceTree' in parent and parent['sourceTree'] == '<group>':
 				parentPath = os.path.normpath(os.path.join(parentPath, parent['path']))
-			elif parent.has_key('sourceTree') and parent['sourceTree'] == 'SOURCE_ROOT':
+			elif 'sourceTree' in parent and parent['sourceTree'] == 'SOURCE_ROOT':
 				parentPath = parent['path']
 		parent['full_path'] = parentPath
 
-		if parent.has_key('isa') and parent['isa'] == 'PBXGroup':
-			if parent.has_key('path'):
+		if 'isa' in parent and parent['isa'] == 'PBXGroup':
+			if 'path' in parent:
 				groups = os.path.normpath(os.path.join(groups, parent['path']))
-			elif parent.has_key('name'):
+			elif 'name' in parent:
 				groups = os.path.normpath(os.path.join(groups, parent['name']))
 
 		parent['groups'] = groups
-		if parent.has_key('children'):
+		if 'children' in parent:
 			for childID in parent['children']:
 				self.completeObjectsPath(str(childID), parentPath, groups)
 
-	def childrenWithKeyPathAtNode(self, path=[], o=None):
-		if o == None:
+	def childrenWithKeyPathAtNode(self, path=(), o=None):
+		if o is None:
 			o = self.json
 
 		for p in path:
-			if o.has_key(p):
+			if p in o:
 				o = o[p]
 			else:
 				return None

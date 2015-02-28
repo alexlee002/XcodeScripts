@@ -6,6 +6,7 @@ from template_function import singleton
 
 LogAdapter = enum(SHELL=0, XCODE=1)
 
+
 @singleton
 class Logger(object):
 	"""a better way to show outputs"""
@@ -35,4 +36,5 @@ class Logger(object):
 		if self.adapter == LogAdapter.XCODE:
 			print 'error: %s' % message
 		else:
-			print '\033[1;31m-[ERROR] %s\033[0m' % message
+			import sys
+			sys.stderr.write('\033[1;31m-[ERROR] %s\033[0m\r\n' % message)
