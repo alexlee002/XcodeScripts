@@ -24,7 +24,7 @@ import utils
 from utils.logger import Logger
 from utils.constants import MergeMode
 from utils.constants import IdiomType
-from utils.utils import __line__
+from utils.functions import __line__
 
 # constant vars
 DefaultImageResizingMode = 'fill'
@@ -37,16 +37,58 @@ NinePatchImageBorderMarkerColor = (0, 0, 0, 255)
 SupportIdioms = (IdiomType.IPHONE, IdiomType.IPAD, IdiomType.UNIVERSAL)
 SupportedScale = ('1x', '2x', '3x')
 
+ImageModuleName = 'Image'
+
+
+def checkMoulePIL():
+	## Check dependence of PIL, we need this module to process images
+	try:
+		__import__(ImageModuleName)
+	except Exception:
+		Logger().warn(
+			'Python Module "%s" (PIL) is not installed, '
+			'and it is required to parse resizing-images. try to install it automatically ...' % ImageModuleName)
+		easy_install = utils.functions.pathForShell('easy_install')
+		if easy_install is None:
+			Logger().error('Command: "easy_install" is not found, auto-installation is not complete, please install %s (PIL) manually.' % ImageModuleName)
+			sys.exit(1)
+
+		p = subprocess.Popen(['sudo', easy_install, 'PIL'], stdout=subprocess.PIPE)
+		stdout, stderr = p.communicate()
+		if p.returncode != 0:
+			if stderr:
+				Logger().verbose(stderr)
+			if stdout:
+				Logger().verbose(stdout)
+			Logger().error('Auto-installation is not completed, please install %s (PIL) manually.' % ImageModuleName)
+			Logger().info(
+				'If installation failed caused by "\'X11/Xlib.h\' file not found", '
+				'Please try to run "xcode-select --install" to install Xcode command-line tools'
+				' and then try again.')
+			sys.exit(1)
+
+		Logger().info('========= Install PIL completed ========')
+	## END of checking dependence for PIL
+
 
 class ImageModel(object):
 	def __init__(self, filePath, attributes=None):
 		super(ImageModel, self).__init__()
+		assignedName = filePath if filePath is not None else attributes[0]
 		self.name = self.scale = self.idiom = self.ext = self.sliceImage = self.subtype = None
 		self.filePath = filePath
 		if filePath:
 			attributes = ImageModel.parseImageFileName(filePath)
 		if attributes and len(attributes) == 6:
 			self.name, self.scale, self.idiom, self.ext, self.sliceImage, self.subtype = attributes
+
+		if self.name:
+			self.name = ImageModel.canonicalImageNameWitName(self.name)
+		if self.name is None and assignedName is not None:
+			import traceback
+			Logger().error('Illegal file name: %s, allow characters:[a-zA-Z0-9_.]' % filePath)
+			traceback.print_stack()
+			sys.exit(1)
 		self.resizing = None  # dict
 		self.needRewriteSliceImage = False
 		#print 'attrs: %s' % attributes
@@ -108,8 +150,6 @@ class ImageModel(object):
 			if not idiom or not idiom in SupportIdioms:
 				idiom = IdiomType.UNIVERSAL
 		#filter special chars
-		if name:
-			name = ImageModel.canonicalImageNameWitName(name)
 		return (name, scale, idiom, ext, sliceImage, subtype)
 
 	@staticmethod
@@ -118,13 +158,20 @@ class ImageModel(object):
 		name = re.sub('[^\w\d_]', '_', name)
 		while name.find('__') > 0:
 			name = name.replace('__', '_')
+		name = None if name == '_' else name
 		return name
 
 	@staticmethod
 	def imageModeFromDict(dic):
 		model = ImageModel(None)
-		(model.idiom, fn, model.scale, model.subtype, model.resizing) = utils.valueOrNoneFromDictWithKeys(dic, ('idiom', 'filename', 'scale', 'subtype', 'resizing'))
+		(model.idiom, fn, model.scale, model.subtype, model.resizing) = utils.functions.valueOrNoneFromDictWithKeys(
+			dic,
+			('idiom', 'filename', 'scale', 'subtype', 'resizing'))
 		(model.name, s, i, model.ext, model.sliceImage, t) = ImageModel.parseImageFileName(fn)
+		model.name = ImageModel.canonicalImageNameWitName(model.name)
+		if model.name is None and fn is not None:
+			Logger().error('Illegal file name: %s, allow characters:[a-zA-Z0-9_.]' % fn)
+			sys.exit(1)
 		return model
 
 	@staticmethod
@@ -134,17 +181,17 @@ class ImageModel(object):
 		if name:
 			destName = name
 		if sliceImage:
-			destName = destName + '.9'
+			destName += '.9'
 		if subtype:
-			destName = destName + subtype
+			destName += subtype
 		if scale and not scale == '1x':
-			destName = '%s@%s' % (destName, scale)
+			destName += '@%s' % scale
 		if idiom and not idiom == IdiomType.UNIVERSAL:
-			destName = '%s~%s' % (destName, idiom)
+			destName += '~%s' % idiom
 		if ext:
-			destName = destName + ext
+			destName += ext
 		else:
-			destName = destName + '.png'
+			destName += '.png'
 		return destName
 
 	def canonicalFileName(self):
@@ -250,8 +297,77 @@ class XCAssets(object):
 		return self
 	##########################################
 
-	def buildImagesets(self, fastMode=True):
+	def buildImagesets(self, fastMode=True, normalizeImagesetName=False):
 		warnings = {}
+
+		def _originalConfigForImageNamed(originalJson, filePath):
+			fileName = os.path.basename(filePath)
+			(_, scale, idiom, _, _, subtype) = ImageModel.parseImageFileName(fileName)
+			if 'images' in originalJson and type(originalJson['images']) is list or type(originalJson['images']) is tuple:
+				matches = []
+				for imageDic in originalJson['images']:
+					if 'filename' in imageDic and imageDic['filename'] == fileName:
+						matches.append(imageDic)
+
+				for imageDic in matches:
+					attrs = utils.functions.valueOrNoneFromDictWithKeys(imageDic, ('scale', 'idiom', 'subtype'))
+					if attrs == (scale, idiom, subtype):
+						return imageDic
+
+				if len(matches) == 1:
+					return matches[0]
+				elif len(matches) > 1:
+					Logger().warn(
+						'Conflict settings found in Original Contents.json: The same image file has multi-configs: %s; '
+						'Trying to find the most matched configuration.' % filePath)
+					checkMoulePIL()
+					Image = __import__(ImageModuleName)
+					image = Image.open(filePath)
+					w, h = image.size
+					for imageDic in sorted(matches.iteritems(), key=lambda d: d[1], reverse=True):
+						if 'scale' in imageDic and re.match('^\d+x$', imageDic['scale']) is not None:
+							intScale = int(scale[:-1])
+							if w % intScale == 0 and h % intScale == 0:
+								return imageDic
+			return None
+
+		def _imageFilesInOriginalConfig(originalJson):
+			images = []
+			if 'images' in originalJson and type(originalJson['images']) is list or type(originalJson['images']) is tuple:
+				for img in originalJson['images']:
+					if 'filename' in img and len(img['filename']) > 0:
+						images.append(img['filename'])
+			return sorted(images)
+
+		def _updateImageModeWithOriginalConfig(originalDic, imageModel):
+			if originalDic is None:
+				return
+			if 'scale' in originalDic and re.match('^\d+x$', originalDic['scale']) is not None:
+				imageModel.scale = originalDic['scale']
+			if 'idiom' in originalDic and originalDic['idiom'] in SupportIdioms:
+				imageModel.idiom = originalDic['idiom']
+			if 'subtype' in originalDic and originalDic['subtype'] == 'retina4':
+				imageModel.subtype = '-568h'
+
+		def _renameImageFileNameWithImagesetName(imagesetPath, imgModel):
+			# rename file to canonical file name
+			imageFileName = os.path.basename(imgModel.filePath)
+			canonicalFileName = os.path.splitext(os.path.basename(imagesetPath))[0]
+			canonicalFileName = ImageModel.canonicalImageNameWitName(canonicalFileName)
+			if canonicalFileName:
+				attr = (canonicalFileName, imgModel.scale, imgModel.idiom, imgModel.ext, imgModel.sliceImage, imgModel.subtype)
+				canonicalFileName = ImageModel.fileNameWithAttributes(attr)
+			else:
+				canonicalFileName = imgModel.canonicalFileName()
+			if canonicalFileName and imageFileName != canonicalFileName:
+				try:
+					destPath = os.path.join(imagesetPath, canonicalFileName)
+					os.renames(os.path.join(imagesetPath, imageFileName), destPath)
+					imgModel.name = ImageModel.parseImageFileName(canonicalFileName)[0]
+					imgModel.filePath = destPath
+				except Exception, e:
+					imgModel.name = ImageModel.parseImageFileName(imageFileName)[0]
+					Logger().warn('rename file: "%s" to "%s" failed, directory: %s; error: %s' % (imageFileName, canonicalFileName, imagesetPath, e))
 
 		#inner function
 		def _buildImageset(path):
@@ -263,57 +379,68 @@ class XCAssets(object):
 					jsonString = fp.read()
 					originalJson = json.loads(jsonString)
 
-			imageFiles = [f for f in os.listdir(path) if self._isImageFile(os.path.join(path, f))]
+			imageFiles = sorted([f for f in os.listdir(path) if self._isImageFile(os.path.join(path, f))])
+
 			imageDic = {}
 			_addSupportedDeviceIdiom(imageDic, IdiomType.UNIVERSAL)
 			hasError = False
 			for f in imageFiles:
 				imgModel = ImageModel(os.path.join(path, f))
+				originalConfig = _originalConfigForImageNamed(originalJson, os.path.join(path, f))
+				_updateImageModeWithOriginalConfig(originalConfig, imgModel)
+
 				if imgModel.sliceImage:
 					resizingImage = ResizingImage(imgModel.filePath).parseResizingImage()
-					if not resizingImage and not originalJson:
-						Logger().error('Image "%s" has 9-patch image name subfix, but It seems not a canonical 9-patch format. Please check it manually.' % imgModel.filePath)
-						sys.exit(1)
-					elif not resizingImage:
-						#这是一个已经处理过的9.png 图片, 保留原来 json 中的 resizing 信息
-						originalInfo = _findImageInfoFromOriginalJson(imgModel, originalJson)
-						if not originalInfo or not 'resizing' in originalInfo:
-							Logger().error('Lost information for image:"%s". '
-								'This image should be a resizable image, '
-								'but we could not find any information from the original Contents.json,'
+					if not resizingImage:
+						if originalConfig and 'resizing' in originalConfig:
+							#这是一个已经处理过的9.png 图片, 保留原来 json 中的 resizing 信息
+							imgModel.resizing = originalConfig['resizing']
+						else:
+							# 可能是一个可缩放图片, 但是丢失了resizing信息
+							# 或者是一个不可缩放图片, 但是命名不规范
+							# 统一按不可缩放图片处理
+							Logger().warn(
+								'Lost resizing information for image:"%s". '
+								'This image seems to be a resizable image, '
+								'but we could not find any resizing information. '
 								'please check it manually.' % imgModel.filePath)
-							sys.exit(1)
-						imgModel.resizing = originalInfo['resizing']
+							imgModel.sliceImage = False
 					else:
 						imgModel.resizing = resizingImage.toDict()
 						imgModel.needRewriteSliceImage = True
 				## add imageModel to imageDic
-				if not _addImageModelToImagesset(imageDic, imgModel):
+				if not _addImageModelToImagesset(imageDic, imgModel, originalJson):
 					hasError = True
 			if not hasError:
-				_buildJsonFile(imageDic, path)
-				for k, imgModel in imageDic.items():
+				for k in imageDic.keys():
+					imgModel = imageDic[k]
+					# IMPORTANT! CAN NOT modify imgmodel attributes after _renameImageFileNameWithImagesetName()
+					if imgModel.name and imgModel.filePath:
+						_renameImageFileNameWithImagesetName(path, imgModel)
 					if imgModel.needRewriteSliceImage:
 						if not ResizingImage(imgModel.filePath).clipBorderAndOverwrite():
 							Logger().warn('Failed to rewrite resizing image: "%s".' % imgModel.filePath)
-						else:
-							with open(jsonFile, 'a') as fp:
-								fp.write('')  # make sure Content.json is the last modified file
+				_buildJsonFile(imageDic, path)
 
-		def _findImageInfoFromOriginalJson(imageModel, originalJson):
-			if not type(originalJson) is dict or not 'images' in originalJson:
-				print 'original json not a dict'
-				return None
-			for imgJson in originalJson['images']:
-				attrs = utils.valueOrNoneFromDictWithKeys(imgJson, ('filename', 'scale', 'idiom', 'subtype'))
-				if attrs == (imageModel.canonicalFileName(), imageModel.scale, imageModel.idiom, imageModel.subtype):
-					return imgJson
-			return None
+			else:
+				Logger().error('Conflicts found:')
+				for k, arr in warnings.items():
+					Logger().error('%s =>\n\t%s' % (k, '\n\t'.join(arr)))
+					sys.exit(1)
+
+		# def _findImageInfoFromOriginalJson(imageModel, originalJson):
+		# 	if not type(originalJson) is dict or not 'images' in originalJson:
+		# 		return None
+		# 	for imgJson in originalJson['images']:
+		# 		attrs = utils.functions.valueOrNoneFromDictWithKeys(imgJson, ('filename', 'scale', 'idiom', 'subtype'))
+		# 		if attrs == (imageModel.canonicalFileName(), imageModel.scale, imageModel.idiom, imageModel.subtype):
+		# 			return imgJson
+		# 	return None
 
 		def _keyForImage(imageModel):
 			return '%s.%s.%s' % (imageModel.idiom, imageModel.scale, imageModel.subtype)
 
-		def _addImageModelToImagesset(imagesDic, imageModel):
+		def _addImageModelToImagesset(imagesDic, imageModel, originalJson):
 			hasError = False
 			key = _keyForImage(imageModel)
 			if not key in imagesDic:
@@ -322,27 +449,34 @@ class XCAssets(object):
 			elif imagesDic[key].name is None:
 				imagesDic[key] = imageModel
 			else:
-				self._appendArrayItemToDicForKey(warnings, os.path.dirname(imageModel.filePath), [imagesDic[key].canonicalFileName(), imageModel.canonicalFileName()])
-				hasError = True
+				imgConfig = _originalConfigForImageNamed(originalJson, imageModel.filePath)
+				conflictConfig = None if imagesDic[key].filePath is None else _originalConfigForImageNamed(originalJson, imagesDic[key].filePath)
+
+				if conflictConfig is None and imgConfig:
+					imagesDic[key] = imageModel
+				elif conflictConfig and imgConfig is None:
+					pass
+				else:
+					self._appendArrayItemToDicForKey(warnings, os.path.dirname(imageModel.filePath), [imagesDic[key].canonicalFileName(), imageModel.canonicalFileName()])
+					hasError = True
 			return not hasError
 
 		##
 		def _buildJsonFile(imageDic, path):
-			images = [img.toDict() for key, img in imageDic.items()]
+			images = [img.toDict() for img in imageDic.values()]
 			contents = {'images': images, 'info': {'version': DefaultContentsJsonVersion, 'author':  DefaultContentsJsonAuthor}}
 			jsonFile = os.path.join(path, 'Contents.json')
-			fp = open(jsonFile, 'wb')
-			if fp:
-				jstr = json.dumps(contents, sort_keys=True, indent=2)
-				if jstr:
-					fp.write(jstr)
-					fp.close()
+			with open(jsonFile, 'wb') as fp:
+				if fp:
+					jstr = json.dumps(contents, sort_keys=False, indent=2)
+					if jstr:
+						fp.write(jstr)
+					else:
+						Logger().error('%s\nis not JSON serializable' % contents)
+						sys.exit(1)
 				else:
-					Logger().error('%s\nis not JSON serializable' % contents)
+					Logger().error('Can not create file:%s' % jsonFile)
 					sys.exit(1)
-			else:
-				Logger().error('Can not create file:%s' % jsonFile)
-				sys.exit(1)
 
 		##
 		def _addSupportedDeviceIdiom(imageDic, idiom):
@@ -364,10 +498,21 @@ class XCAssets(object):
 				return
 
 			for f in os.listdir(path):
+				imagesetName, pathExt = os.path.splitext(f)
 				abspath = os.path.join(path, f)
-				imagesetName, pathExt = os.path.splitext(abspath)
 				if os.path.isdir(abspath) and pathExt == '.imageset':
 					needUpdate = False
+
+					# canonical the imageset name
+					if normalizeImagesetName:
+						canonicalName = ImageModel.canonicalImageNameWitName(imagesetName)
+						if canonicalName and canonicalName != imagesetName:
+							try:
+								os.renames(abspath, os.path.join(path, ('%.imageset' % canonicalName)))
+								needUpdate = True
+							except Exception, e:
+								Logger().warn('Normalize imageset name for imageset "%s" failed: %s' % (abspath, e))
+
 					jsonfile = os.path.join(abspath, 'Contents.json')
 					if not os.path.isfile(jsonfile) or not os.stat(abspath).st_mtime == os.stat(jsonfile).st_mtime:
 						needUpdate = True
@@ -406,7 +551,7 @@ class XCAssets(object):
 			return False
 
 		defaultImageExts = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.bmp')
-		fileCmd = utils.pathForShell('file')
+		fileCmd = utils.functions.pathForShell('file')
 		if not fileCmd is None:
 			p = subprocess.Popen([fileCmd, filepath], stdout=subprocess.PIPE)
 			stdout, stderr = p.communicate()
@@ -429,9 +574,12 @@ class XCAssets(object):
 
 class ResizingImage(object):
 	"""docstring for ResizingImage"""
+
+	ImageModuleName = "Image"
+
 	def __init__(self, filePath):
 		super(ResizingImage, self).__init__()
-		self._checkMoulePIL()
+		checkMoulePIL()
 		self.filePath = filePath
 		self.vLoc = self.hLoc = None
 		self.vLen = self.hLen = 0
@@ -445,7 +593,7 @@ class ResizingImage(object):
 		if not imageAttributes[4]:
 			return None
 
-		import Image
+		Image = __import__(ImageModuleName)
 		image = Image.open(self.filePath)
 		self.originalSize = image.size
 		w, h = self.originalSize
@@ -470,7 +618,7 @@ class ResizingImage(object):
 	# IMPORTANT!!! DONOT FORGET check if image is a canonical 9-patch image first!
 	# Only 9-patch image can use this function. Otherwise the image will lose information
 	def clipBorderAndOverwrite(self):
-		import Image
+		Image = __import__(ImageModuleName)
 		image = Image.open(self.filePath)
 		w, h = image.size
 		body = image.crop((1, 1, w - 1, h - 1))
@@ -509,7 +657,7 @@ class ResizingImage(object):
 	#	有边框和下边框保留， 全透明全黑色或者完全不透明全白色
 	# NOTE：iOS 下的 @2x, @3x 图像， 边框仍然是1像素， 无需乘以 scale
 	def _verifyImageformat(self, image):
-		import Image
+		Image = __import__(ImageModuleName)
 
 		if not image.mode == 'RGBA':
 			image = image.convert('RGBA')
@@ -545,7 +693,7 @@ class ResizingImage(object):
 		return isCanonicalFormat
 
 	def _resizingRange(self, cropImage):
-		import Image
+		Image = __import__(ImageModuleName)
 		img = cropImage
 
 		if not img.mode == 'RGBA':
@@ -584,30 +732,6 @@ class ResizingImage(object):
 					break
 		return ((hLoc, hLen), (vLoc, vLen))
 
-	def _checkMoulePIL(self):
-		## Check dependence of PIL, we need this module to process images
-		ImageModuleName = "Image"
-		try:
-			__import__(ImageModuleName)
-		except Exception:
-			Logger().warn('Module "%s" is not installed, try to install it automatically ...' % ImageModuleName)
-			easy_install = utils.pathForCmd('easy_install')
-			if easy_install is None:
-				Logger().error('Automatic installation can not be completed, please install %s manually.' % ImageModuleName)
-				sys.exit(1)
-
-			p = subprocess.Popen(['sudo', easy_install, 'PIL'], stdout=subprocess.PIPE)
-			stdout, stderr = p.communicate()
-			if p.returncode != 0:
-				if stderr:
-					Logger().verbose(stderr)
-				Logger().error('Automatic installation can not be completed, please install %s manually.' % ImageModuleName)
-				Logger().info('If installation failed caused by "\'X11/Xlib.h\' file not found", Please try to run "xcode-select --install" to install Xcode command-line tools first and then try again.')
-				sys.exit(1)
-
-			Logger().info('========= Install %s completed ========' % ImageModuleName)
-		## END of checking dependence for PIL
-
 
 if __name__ == '__main__':
 	Logger().info('Hello, welcome!')
@@ -615,4 +739,7 @@ if __name__ == '__main__':
 		if sys.argv[1] == 'make':
 			XCAssets('/Users/baidu/workspace/test/xcassets-test').makeImagesets('/Users/baidu/workspace/github/BeeFramework/projects/example/example/view_iPhone/resource/img')
 		elif sys.argv[1] == 'build':
-			XCAssets('/Users/baidu/workspace/test/xcassets-test').buildImagesets()
+			#XCAssets('/Users/baidu/workspace/test/xcassets-test').buildImagesets()
+			XCAssets('/Users/baidu/workspace/testing/netdisk/netdisk/netdisk_iphone/netdisk_iPhone/Resources/Image_Resource.xcassets').buildImagesets(fastMode=False)
+
+			#XCAssets('/Users/baidu/Desktop/Images.xcassets').buildImagesets(fastMode=False)

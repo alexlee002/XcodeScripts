@@ -23,6 +23,14 @@ def trimComment(filePath):
 #end of func:trimComment
 
 
+def genRandomString(length=12, allowed_chars='abcdefg1234567890'):
+	import random
+	import hashlib
+	import time
+	random.seed(hashlib.sha256(("%s%s%s" % (random.getstate(), time.time(), 'alexLEE002')).encode('utf-8')).digest())
+	return ''.join(random.choice(allowed_chars) for i in range(length))
+
+
 def valueOrNoneFromDictWithKeys(dic, keys):
 	values = []
 	for k in keys:
