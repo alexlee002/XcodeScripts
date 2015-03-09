@@ -499,6 +499,7 @@ class XCAssets(object):
 
 			for f in os.listdir(path):
 				imagesetName, pathExt = os.path.splitext(f)
+				pathExt = pathExt.lower()
 				abspath = os.path.join(path, f)
 				if os.path.isdir(abspath) and pathExt == '.imageset':
 					needUpdate = False

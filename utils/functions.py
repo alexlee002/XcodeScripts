@@ -66,12 +66,27 @@ def isSubPathOf(path, ancestor):
 	return path[:len(ancestor)] == ancestor
 
 
-def stringHasSubfix(string, subfix):
-	return string[-len(subfix):] == subfix
+def isString(obj, acceptNone=False):
+	if type(obj) is str or type(obj) is unicode:
+		return True
+	elif acceptNone and obj is None:
+		return True
+	else:
+		return False
 
 
-def stringHasPrefix(string, prefix):
-	return string[0:len(prefix)] == prefix
+def stringHasSubfix(string, subfix, ignoreCase=False):
+	if not isString(string) or not isString(subfix):
+		return False
+	mySubfix = string[-len(subfix):]
+	return (mySubfix == subfix) if not ignoreCase else (mySubfix.lower() == subfix.lower())
+
+
+def stringHasPrefix(string, prefix, ignoreCase=False):
+	if not isString(string) or not isString(prefix):
+		return False
+	myPrefix = string[0:len(prefix)]
+	return (myPrefix == prefix) if not ignoreCase else (myPrefix.lower() == prefix.lower())
 
 
 def __line__():

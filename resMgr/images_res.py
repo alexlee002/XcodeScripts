@@ -4,14 +4,32 @@
 
 import os
 import sys
-import json
 
 mymoduleRoot = os.path.join(os.path.dirname(__file__), "..")
 if not mymoduleRoot in sys.path:
 	sys.path.append(mymoduleRoot)
 
-import utils
-import utils.functions
+from utils.functions import *
+from utils.logger import Logger
+from pbxproj.pbxnode import *
+from pbxproj.pbxproj import *
+
+
+class Imageset(object):
+	"""docstring for Imageset"""
+	def __init__(self, path, xcassets=None):
+		super(Imageset, self).__init__()
+		self.path = path
+		self.xcassets = xcassets
+		self.name = None
+
+	def imageName(self):
+		if self.name is None and self.path:
+			name = os.path.basename(self.path)
+			name, ext = os.path.splitext(name)
+			if ext.lower() == '.imageset':
+				self.name = name
+		return self.name
 
 
 class ImagesResource(object):
@@ -19,123 +37,104 @@ class ImagesResource(object):
 		super(ImagesResource, self).__init__()
 		self.xcproj = xcproj
 
-	def allImageObjects(self):
-		imageFiles = self.loadImages()
-		imagesets = self.loadImagesets()
-		duplicatedImages = {}
-		for name, files in imageFiles.items():
-			if name in imagesets:
-				duplicatedImages[name] = (files[0], imagesets[name])
-		if len(duplicatedImages) > 0:
-			self._exitWithImageNamesConflictMessage(duplicatedImages)
-		return imageFiles, imagesets
+	def imageFiles(self, targetName):
+		imageObjects = {}
+		conflicts = {}
+		resourcePhase = self._resourcePhase(targetName)
+		if resourcePhase:
+			for buildFileId in resourcePhase.files:
+				node = self.xcproj.nodeWithGuid(buildFileId)
+				if node and node.isaConfirmsTo('PBXBuildFile'):
+					node = self.xcproj.nodeWithGuid(node.fileRef)
+					if node and node.isaConfirmsTo('PBXFileReference') and stringHasPrefix(node.fileType(), 'image.', ignoreCase=True):
+						self._addImageObject(self._pathForImage(node), node.name, imageObjects, conflicts)
 
-	# load images which is directly added to the project/boundles, not in imagesets
-	def loadImages(self, ignoreGroupPaths=()):
-		from xcassets import ImageModel
-		imageResources = {}
-		duplicatedImages = {}
+					elif node and node.isaConfirmsTo('PBXVariantGroup') and len(node.children) > 0:
+						child = self.xcproj.nodeWithGuid(node.children[0])
+						if child.isaConfirmsTo('PBXFileReference') and stringHasPrefix(child.fileType(), 'image.', ignoreCase=True):
+							self._addImageObject(self._pathForImage(node), node.name, imageObjects, conflicts)
+		return imageObjects, conflicts
 
-		for f in [f for f in self.xcproj.getfiles() if str(self.xcproj.childrenWithKeyPathAtNode(('lastKnownFileType',), f))[0:6] == 'image.']:
-			shouldIgnore = False
-			for ig in ignoreGroupPaths:
-				if utils.isSubPathOf(path=f['groups'], ancestor=ig):
-					shouldIgnore = True
-					break
-			if shouldIgnore:
-				utils.logger.Logger().verbose('Ignore file:%s' % f['full_path'])
-				continue
+	def imagesets(self, targetName):
+		imagesets = {}
+		conflicts = {}
 
-			imagePath = (os.path.basename(f['path'])).lower()
-			(imgName, scale, idiom, ext, sliceImage, subtype) = ImageModel.parseImageFileName(imagePath)
-			#check duplicate images
-			#TODO: need to support localizad images, and bundle-inside images
-			if imgName in imageResources:
-				for imgObj in imageResources[imgName]:
-					if (imgName, scale, idiom, subtype) == imgObj[1]:
-						if imgName not in duplicatedImages:
-							duplicatedImages[imgName] = [imgObj[0]]
-						duplicatedImages[imgName].append(f['full_path'])
-						break
-			else:
-				if imgName not in imageResources:
-					imageResources[imgName] = []
-				imageResources[imgName].append((f['full_path'], (imgName, scale, idiom, subtype)))
+		def _imagesetsFromPath(path):
+			if os.path.isdir(path):
+				for f in filter(lambda f: os.path.isdir(os.path.join(path, f)), os.listdir(path)):
+					pathName, pathExt = os.path.splitext(f)
+					pathExt = pathExt.lower()
+					if pathExt == '.imageset':
+						imgset = Imageset(os.path.join(path, f))
+						self._addImageObject(self._pathForImage(imgset), imgset.imageName(), imagesets, conflicts)
+					elif not pathExt in ('.launchimage', '.appiconset'):
+						_imagesetsFromPath(os.path.join(path, f))
 
-		if len(duplicatedImages) > 0:
-			self._exitWithImageNamesConflictMessage(duplicatedImages)
+		resourcePhase = self._resourcePhase(targetName)
+		if not resourcePhase:
+			return {}
+		for buildFileId in resourcePhase.files:
+			node = self.xcproj.nodeWithGuid(buildFileId)
+			if node and node.isaConfirmsTo('PBXBuildFile'):
+				node = self.xcproj.nodeWithGuid(node.fileRef)
+				if node and node.isaConfirmsTo('PBXFileReference') \
+					and node.fileType() == 'folder.assetcatalog' \
+					and stringHasSubfix(node.path, '.xcassets', ignoreCase=True):
+					xcassetsPath = self.xcproj.absolutePathForNode(node.guid)
+					_imagesetsFromPath(xcassetsPath)
+		return imagesets, conflicts
 
-		notFoundImages = []
-		images = {}
-		for imgName, arr in imageResources.items():
-			files = []
-			for f in arr:
-				files.append(f[0])
-				imagepath = os.path.join(self.xcproj.projectHome, f[0])
-				if not os.path.isfile(imagepath):
-					notFoundImages.append(f[0])
-			images[imgName] = files
-
-		if len(notFoundImages) > 0:
-			errmsg = 'Image files not found:\n' + '\n'.join('%s' % f for f in notFoundImages) + '\n'
-			utils.logger.Logger().error(errmsg)
+	def _resourcePhase(self, targetName):
+		target = self.xcproj.targetNamed(targetName)
+		if not target:
+			Logger().error('target "%s" not found in project "%s".' % (targetName, self.xcproj.projectHome))
 			sys.exit(1)
+		resourcePhase = None
+		for buildPhaseId in target.buildPhases:
+			buildPhase = self.xcproj.nodeWithGuid(buildPhaseId)
+			if buildPhase and buildPhase.isaConfirmsTo('PBXResourcesBuildPhase'):
+				resourcePhase = buildPhase
+				break
+		return resourcePhase
 
-		return images
-
-	def loadImagesets(self, ignoreAssets=()):
-		assets = []
-
-		def __loadImagesetsFromAssets(assetPath):
-			from xcassets import ImageModel
-			abspath = os.path.abspath(os.path.join(self.xcproj.projectHome, assetPath))
-			for f in [f for f in os.listdir(abspath) if os.path.isdir(os.path.join(abspath, f))]:
-				if utils.functions.stringHasSubfix(f, subfix='.imageset'):
-					imgset = os.path.splitext(f)[0].lower()
-					imgset = ImageModel.canonicalImageNameWitName(imgset)
-					imgsetPath = os.path.join(abspath, f)
-					contentJson = os.path.join(imgsetPath, 'Contents.json')
-					if os.path.exists(contentJson):
-						with open(contentJson) as fp:
-							contents = fp.read()
-						contents = json.loads(contents)
-						if 'images' in contents:
-							#for image in [f['filename'] for f in contents['images'] if 'filename' in f]:
-								#if not os.path.isfile(os.path.join(imgsetPath, image)):
-									#utils.logger.Logger().warn('image file:"%s" not found in imageset:"%s"' % (image, imgsetPath[len(self.xcproj.projectHome) + 1:]))
-							assets.append({'name':  imgset, 'full_path': imgsetPath[len(self.xcproj.projectHome) + 1:]})
-				elif not utils.functions.stringHasSubfix(f, subfix='.appiconset') and not utils.functions.stringHasSubfix(f, subfix='.launchimage'):
-					__loadImagesetsFromAssets(os.path.join(assetPath, f))
-		#end of __loadImagesetsFromAssets
-
-		for f in [f for f in self.xcproj.getfiles() if str(self.xcproj.childrenWithKeyPathAtNode(['lastKnownFileType'], f)) == 'folder.assetcatalog']:
-			if f in ignoreAssets:
-				utils.logger.Logger().verbose('Ignore xcassets: %s' % f['path'])
-				continue
-			__loadImagesetsFromAssets(f['full_path'])
-
-		imageAssets = {}
-		duplicatedImages = {}
-		for asset in sorted(assets, key=lambda x: x['name']):
-			if asset['name'] in imageAssets:
-				if asset['name'] in duplicatedImages:
-					duplicatedImages[asset['name']].append(asset['full_path'])
-				else:
-					duplicatedImages[asset['name']] = [asset['full_path']]
+	def _addImageObject(self, imgPath, name, imagesDict, conflictsDict):
+		from xcassets import ImageModel
+		canonicalName = ImageModel.canonicalImageNameWitName(name)
+		if not canonicalName:
+			Logger().error('image name is illegal, image name must matches "^[\w_][\w\d_]+$"')
+			sys.exit(1)
+		if canonicalName.lower() in map(lambda k: k.lower(), imagesDict.keys()):
+			if canonicalName in conflictsDict:
+				conflictsDict[canonicalName].append(imgPath)
 			else:
-				imageAssets[asset['name']] = asset['full_path']
-		if len(duplicatedImages) > 0:
-			self._exitWithImageNamesConflictMessage(duplicatedImages)
+				conflictsDict[canonicalName] = [imgPath]
+		else:
+			imagesDict[canonicalName] = imgPath
 
-		return imageAssets
+	def _pathForImage(self, imgObj):
+		if isinstance(imgObj, PBXNode):
+			path = self.xcproj.absolutePathForNode(imgObj.guid)
+		if isinstance(imgObj, Imageset):
+			path = imgObj.path
+		if isSubPathOf(path, self.xcproj.projectHome):
+			path = path[len(self.xcproj.projectHome)+1:]
+		return path
 
-	def _exitWithImageNamesConflictMessage(self, conflicts):
-		errmsg = 'Image names conflict:'
-		for name in conflicts.keys():
-			errmsg = errmsg + '\n' + name + '=>\n' + '\n'.join(['%s' % t for t in conflicts[name]]) + '\n'
-		utils.logger.Logger().error(errmsg)
-		sys.exit(1)
 
+#######################################################################################
+def Test_loadImagesets():
+	xcproj = XcodeProject().parseXcodeProject('/Users/baidu/workspace/testing/netdisk/netdisk/netdisk_iphone/netdisk_iPhone.xcodeproj')
+	imagesets, confilcts = ImagesResource(xcproj).imagesets(targetName='netdisk_iPhone')
+	print '-------------- imagesets --------------'
+	for name, path in imagesets.items():
+		print '\t%s\t\t=> %s' % (name, path)
+	print '-------------- confilcts --------------'
+	for name, path in confilcts.items():
+		print '\t%s\t\t=> %s' % (name, path)
+
+
+def main():
+	Test_loadImagesets()
 
 if __name__ == '__main__':
-	print __file__ + ':' + ('YES' if utils.functions.stringHasSubfix('abc.imageset', '.imageset') else 'NO')
+	main()

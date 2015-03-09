@@ -21,6 +21,11 @@ from pbxnode import *
 ######################################################################################
 class XcodeProject(object):
 	"""Xcode project file(pbxproj) parser and editor"""
+
+	#DEVELOPER_DIR = '/Applications/Xcode.app/Contents/Developer'
+	#SDKROOT = 'iphoneos'
+	#BUILT_PRODUCTS_DIR = 'build/[.*]-iphoneos'
+
 	def __init__(self):
 		super(XcodeProject, self).__init__()
 
@@ -62,12 +67,47 @@ class XcodeProject(object):
 				return node
 		return None
 
+	def targetNamed(self, targetName):
+		for target in self.rootElement.objects[self.rootElement.rootObject].targets:
+			target = self.rootElement.objects[target]
+			if target.isaConfirmsTo('PBXTarget') and target.name == targetName:
+				return target
+		return None
+
+	def nodeWithGuid(self, guid):
+		return self.rootElement.objects[guid] if guid in self.rootElement.objects else None
+
+	def nodesByAbsolutepath(self, abspath):
+		abspath = os.path.abspath(abspath)
+		nodes = []
+		for node in self.rootElement.objects.values():
+			if node.isaConfirmsTo('PBXGroup') or node.isa == 'PBXFileReference':
+				if abspath == self.absolutePathForNode(node.guid):
+					nodes.append(node)
+			elif node.isa == 'PBXProject' and abspath == self.projectDir():
+				nodes.append(node)
+		return nodes
+
 	def buildFileByFileRef(self, fileRef):
 		for node in self.rootElement.objects.values():
 			if node.isa == 'PBXBuildFile' and node.fileRef == fileRef:
 				return node
 		return None
 
+	def parentObjectForNode(self, nodeId):
+		for obj in self.rootElement.objects.values():
+			if obj.isaConfirmsTo('PBXGroup') and nodeId in obj.children:
+				return obj
+			elif obj.isa == 'PBXProject' and (obj.mainGroup == nodeId or nodeId in obj.targets):
+				return obj
+			elif obj.isaConfirmsTo('PBXBuildPhase') and nodeId in obj.files:
+				return obj
+			elif obj.isaConfirmsTo('PBXTarget') \
+				and (nodeId in obj.buildPhases or nodeId in obj.dependencies or nodeId in obj.buildRules or nodeId in {obj.buildConfigurationList, obj.productReference}):
+				return obj
+		return None
+
+	# @deprecated
 	def parentOfGroup(self, groupId):
 		for node in self.rootElement.objects.values():
 			if node.isa == 'PBXGroup' and guid in node.children:
@@ -76,7 +116,15 @@ class XcodeProject(object):
 				return node
 		return None
 
-	def fullPathOfGroup(self, groupId):
+	# @deprecated
+	def groupOfFileReference(self, fileRefId):
+		for node in self.rootElement.objects.values():
+			if node.isaConfirmsTo('PBXGroup') and fileRefId in node.children:
+				return node
+		return None
+
+	# @deprecated
+	def groupPathRelativeToSourceRoot(self, groupId):
 		path = ''
 		if groupId in self.rootElement.objects and self.rootElement.objects[groupId].isa == 'PBXGroup':
 			node = self.rootElement.objects[groupId]
@@ -103,6 +151,150 @@ class XcodeProject(object):
 				return True
 		return False
 
+	@staticmethod
+	def buildSettings(pbxprojPath, target=None):
+		settings = {}
+		if not os.path.isdir(pbxprojPath) or not os.path.splitext(pbxprojPath)[1] == '.xcodeproj':
+			return None
+		args = ['/usr/bin/xcodebuild', '-project', pbxprojPath]
+		if type(target) is str or type(target) is unicode and len(target) > 0:
+			args.extend(['-target', target])
+		args.append('-showBuildSettings')
+
+		p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		stdout, stderr = p.communicate()
+		if p.returncode == 0:
+			for line in stdout.splitlines():
+				components = line.split('=')
+				if len(components) > 1:
+					key = components[0]
+					value = ''.join(components[1:])
+					settings[key.strip()] = value.strip()
+		return settings
+
+	def buildSettingsForKey(self, key, target=None):
+		settings = XcodeProject.buildSettings(self.pbxprojPath, target)
+		return settings[key] if key in settings else None
+
+	def buildProductsDir(self):
+		return self.buildSettingsForKey('BUILT_PRODUCTS_DIR')
+
+	def developerDir(self):
+		return self.buildSettingsForKey('DEVELOPER_DIR')
+
+	def sdkRoot(self):
+		return self.buildSettingsForKey('SDKROOT')
+
+	def projectDir(self):
+		return self.buildSettingsForKey('PROJECT_DIR')
+
+	def absolutePathForNode(self, nodeId):
+		node = self.rootElement.objects[str(nodeId)]
+		path = node.path
+		sourceTree = node.sourceTree
+		if sourceTree == SOURCE_TREE_ENMU.group:
+			parent = self.parentObjectForNode(nodeId)
+			parentPath = ''
+			if parent and parent.isaConfirmsTo('PBXGroup'):
+				parentPath = self.absolutePathForNode(parent.guid)
+			elif parent and parent.isa == 'PBXProject':
+				parentPath = self.projectHome
+				path = parent.projectDirPath
+			path = os.path.join(parentPath, path)
+		elif sourceTree == SOURCE_TREE_ENMU.SOURCE_ROOT:
+			path = os.path.join(self.projectHome, node.path)
+		elif sourceTree == SOURCE_TREE_ENMU.absolute:
+			path = node.path
+		elif sourceTree == SOURCE_TREE_ENMU.SDKROOT:
+			path = os.path.join(self.sdkRoot(), node.path)
+		elif sourceTree == SOURCE_TREE_ENMU.DEVELOPER_DIR:
+			path = os.path.join(self.developerDir(), node.path)
+		elif sourceTree == SOURCE_TREE_ENMU.BUILT_PRODUCTS_DIR:
+			path = os.path.join(self.buildProductsDir(), node.path)
+		return os.path.abspath(path) if path else None
+
+	def removeBuildFile(self, nodeId):
+		fileNode = self.nodeWithGuid(nodeId)
+		if not fileNode:
+			return True
+		buildPhase = self.parentObjectForNode(nodeId)
+		if buildPhase:
+			buildPhase.files.remove(nodeId)
+			del self.rootElement.objects[nodeId]
+		return True
+
+	def removeFileReference(self, nodeId, removeFromDisk=False):
+		fileNode = self.nodeWithGuid(nodeId)
+		if not fileNode:
+			return True
+		del self.rootElement.objects[nodeId]
+		groupNode = self.parentObjectForNode(nodeId)
+		if groupNode:
+			groupNode.children.remove(nodeId)
+		for buildFileNode in filter(lambda n: n.isaConfirmsTo('PBXBuildFile') and n.fileRef == nodeId, self.rootElement.objects):
+			self.removeBuildFile(buildFileNode.guid)
+		return True
+
+	def removeGroup(self, groupId, removeFromDisk=False):
+		groupNode = self.nodeWithGuid(groupId)
+		if not groupNode:
+			return True
+		parent = self.parentObjectForNode(groupId)
+		if parent.isa == 'PBXProject':
+			del parent['mainGroup']
+		elif parent.isaConfirmsTo('PBXGroup'):
+			parent.children.remove(groupId)
+		del self.rootElement.objects[groupId]
+
+		for child in groupNode.children:
+			if child.isaConfirmsTo('PBXGroup'):
+				self.removeGroup(child.guid)
+			elif child.isaConfirmsTo('PBXFileReference'):
+				self.removeFileReference(child.guid, removeFromDisk)
+		return True
+
+	def addGroup(self, path, parentID, sourceTree=SOURCE_TREE_ENMU.group):
+		if not parentID in self.rootElement.objects \
+			or self.rootElement.objects[parentID].isa != 'PBXProject' \
+			or not self.rootElement.objects[parentID].isaConfirmsTo('PBXGroup'):
+			Logger().error('Illegal parent id')
+			return None
+		parent = self.rootElement.objects[parentID]
+		if not path or len(path) == 0:
+			path = None
+		if parent.isaConfirmsTo('PBXGroup'):
+			for guid in parent.children:
+				if guid in self.rootElement.objects \
+					and self.rootElement.objects[guid].isaConfirmsTo('PBXGroup') \
+					and self.rootElement.objects[guid].path == path \
+					and self.rootElement.objects[guid].sourceTree == sourceTree:
+					return self.rootElement.objects[guid]
+			groupNode = PBXGroup.node()
+			groupNode.path = path
+			groupNode.name = None if path is None else os.path.basename(path)
+			groupNode.sourceTree = sourceTree
+			parent.children.append(groupNode.guid)
+			self.rootElement.objects[groupNode.guid] = groupNode
+			return groupNode
+		elif parent.isa == 'PBXProject':
+			if parent.mainGroup is None:
+				groupNode = PBXGroup.node()
+				groupNode.path = path
+				groupNode.name = None if path is None else os.path.basename(path)
+				groupNode.sourceTree = sourceTree
+				parent.mainGroup = groupNode
+				self.rootElement.objects[groupNode.guid] = groupNode
+				return groupNode
+			elif not parent.mainGroup in self.rootElement.objects:
+				groupNode = PBXGroup(None, parent.mainGroup)
+				groupNode.path = path
+				groupNode.name = None if path is None else os.path.basename(path)
+				groupNode.sourceTree = sourceTree
+				parent.mainGroup = groupNode
+				self.rootElement.objects[groupNode.guid] = groupNode
+				return groupNode
+		return None
+
 	def addFile(self, realPath, targetId, groupId):
 		ext = os.path.splitext(realPath)[1].lower()
 		if groupId in self.rootElement.objects and self.rootElement.objects[groupId].isaConfirmsTo('PBXGroup'):
@@ -116,18 +308,18 @@ class XcodeProject(object):
 				self.rootElement.objects[mainGroupId].children.append(groupNode.guid)
 			self.rootElement.objects[groupId] = groupNode
 
-		groupPath = os.path.join(self.projectHome, self.fullPathOfGroup(groupId))
+		groupPath = os.path.abspath(os.path.join(self.projectHome, self.groupPathRelativeToSourceRoot(groupId)))
 		if utils.functions.isSubPathOf(realPath, groupPath):
 			path = realPath[len(groupPath):]
 			path = path[1:] if utils.functions.stringHasPrefix(path, '/') else path
-			sourceTree = '<group>'
+			sourceTree = SOURCE_TREE_ENMU.group
 		elif utils.functions.isSubPathOf(realPath, self.projectHome):
 			path = realPath[len(self.projectHome):]
 			path = path[1:] if utils.functions.stringHasPrefix(path, '/') else path
-			sourceTree = 'SOURCE_ROOT'
+			sourceTree = SOURCE_TREE_ENMU.SOURCE_ROOT
 		elif os.path.exists(realPath):
 			path = realPath
-			sourceTree = '<absolute>'
+			sourceTree = SOURCE_TREE_ENMU.absolute
 
 		isBuildableFile = self.isBuildableFile(realPath)
 
@@ -285,7 +477,7 @@ class XcodeProject(object):
 				if printOuterBrackets:
 					outputLines.append('%s)' % ('' if inSingleLine else _printIdent(ident - (1 if len(obj) > 0 else 0))))
 
-		outFile = filePath if filePath is not None else self.pbxprojPath
+		outFile = filePath if filePath is not None else os.path.join(self.pbxprojPath, 'project.pbxproj')
 		with open(outFile, 'w') as writer:
 			writer.write('// !$*UTF8*$!\n')
 			writer.write('{\n')
@@ -314,10 +506,68 @@ class XcodeProject(object):
 					writer.write('\t%s = %s;\n' % (_canonicalStringValue(name), ''.join(lines)))
 			writer.write('}\n')
 
+	def verifyProjectData(self, errorNodesDict=None, isolatedNodesDict=None):
+		if not self.rootElement.isValid():
+			if errorNodesDict:
+				errorNodesDict['Root Element'] = "Root element"
+			return False
+		hasError = False
+		for guid, node in sorted(self.rootElement.objects.items(), key=lambda node: node[1].isa):
+			if not node.isValid(self):
+				hasError = True
+				if errorNodesDict:
+					errorNodesDict[node.guid] = node.isa
+
+		if isolatedNodesDict is not None:
+			allIds = {}
+
+			def _allValuesFromObjecs(obj):
+				if isDict(obj):
+					for k, v in obj.items():
+						_allValuesFromObjecs(k)
+						_allValuesFromObjecs(v)
+				elif (type(obj) is str or type(obj) is unicode) and PBXNode.isValidGuid(obj):
+					if obj in allIds:
+						count = allIds[obj]
+						allIds[obj] = count + 1
+					else:
+						allIds[obj] = 1
+				elif type(obj) is list or type(obj) is set or type(obj) is tuple:
+					for item in obj:
+						_allValuesFromObjecs(item)
+				elif isinstance(obj, PBXBaseObject):
+					_allValuesFromObjecs(obj.toDict())
+
+			_allValuesFromObjecs(self.rootElement)
+			for guid, counter in allIds.items():
+				if counter < 2:
+					node = self.nodeWithGuid(guid)
+					if node and isinstance(node, PBXNode):
+						isolatedNodesDict[guid] = node.isa
+
+		return not hasError
+
+
 if __name__ == '__main__':
+	#pass
 	#/Users/baidu/workspace/testing/netdisk/netdisk/netdisk_iphone/netdisk_iPhone.xcodeproj
 	#/Users/baidu/workspace/testing/TestProj/TestProj.xcodeproj
 
 	#/Users/baidu/Desktop/test1.xcodeproj/project.pbxproj
 
-	XcodeProject().parseXcodeProject('/Users/baidu/workspace/testing/TestProj1/TestProj1.xcodeproj').writeToFile('/Users/baidu/Desktop/test1.xcodeproj/project.pbxproj')
+
+	xcporj = XcodeProject().parseXcodeProject('/Users/baidu/workspace/testing/netdisk/netdisk/netdisk_iphone/netdisk_iPhone.xcodeproj')
+	errnors = {}
+	isolates = {}
+	if xcporj.verifyProjectData(errnors, isolates):
+		Logger().info('OK')
+	else:
+		Logger().error('error found in objects:')
+		for k, v in errnors.items():
+			Logger().error('%s: %s' % (k, v))
+	if len(isolates) > 0:
+		Logger().warn('Isolate objects found:')
+		for k, v in isolates.items():
+			Logger().warn('%s: %s' % (k, v))
+
+	#XcodeProject().parseXcodeProject('/Users/baidu/workspace/testing/TestProj/TestProj.xcodeproj').writeToFile('/Users/baidu/Desktop/test1.xcodeproj/project.pbxproj')

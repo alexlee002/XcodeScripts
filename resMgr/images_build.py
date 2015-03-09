@@ -11,10 +11,11 @@ if not mymoduleRoot in sys.path:
 
 import utils
 from images_res import ImagesResource
-from utils.pbxprojParser import XCProject
 from utils.logger import Logger
-import utils.template_function
-import utils.functions
+from utils.template_function import *
+from utils.functions import *
+from pbxproj.pbxnode import *
+from pbxproj.pbxproj import *
 
 
 ##################################################################################################
@@ -24,10 +25,21 @@ class ImagesResourceBuilder(object):
 		self.xcproj = xcproj
 
 	def buildImageResources(self, target):
-		imagefiles, imagesets = ImagesResource(self.xcproj).allImageObjects()
+		#imagefiles, imagesets = ImagesResource(self.xcproj).allImageObjects()
+		imagesets, conflicts = ImagesResource(self.xcproj).imagesets(target)
+		if len(conflicts) > 0:
+			self._printNameConflicts(conflicts)
+			sys.exit(1)
 		self._buildImagesets(target, imagesets)
 
-	def _buildImagesets(self, target, imagesets, bundleName='main'):
+	def _printNameConflicts(self, conflicts):
+		lines = ['image name conflicts found:\n']
+		for name, paths in conflicts:
+			lines.append('%s =>\n\t' % name)
+			lines.append('\n\t'.join(paths))
+		Logger().error(''.join(lines))
+
+	def _buildImagesets(self, target, imagesets):
 		from xcassets import ImageModel
 
 		resourceName = 'imagesets'
@@ -125,41 +137,96 @@ class ImagesResourceBuilder(object):
 		headerLines.extend(['', ''])  # 2 lines
 		return headerLines
 
-	def _prepareResourceOutfiles(self, resourceName, bundleName='main'):
-		outfileName = self._outfileName(resourceName, bundleName)
-		headerOutfile = self._fileInProjectWithName('%s.h' % outfileName)
-		sourceOutfile = self._fileInProjectWithName('%s.m' % outfileName)
+	def _sourcePhaseForTarget(self, target):
+		target = self.xcproj.targetNamed(target)
+		if not target:
+			Logger().error('target "%s" not found in project "%s".' % (target, self.xcproj.projectHome))
+			sys.exit(1)
+		buildPhase = None
+		for nodeId in target.buildPhases:
+			node = self.xcproj.nodeWithGuid(nodeId)
+			if node and node.isaConfirmsTo('PBXSourcesBuildPhase'):
+				buildPhase = node
+				break
+		return buildPhase
 
-		headerOutfile = headerOutfile['full_path'] if headerOutfile else None
-		sourceOutfile = sourceOutfile['full_path'] if sourceOutfile else None
+	def _pbxnodeForResorceFiles(self, target):
+		outputDirName = 'auto_gen'
+		mainFileName = 'main.m'
+		mainFilePBXNode = None
+		buildPhase = self._sourcePhaseForTarget(target)
+		if buildPhase:
+			for node in buildPhase.files:
+				if node.isaConfirmsTo('PBXBuildFile'):
+					node = self.xcproj.nodeWithGuid(node.fileRef)
+					if node and node.isaConfirmsTo('PBXFileReference') and os.path.basename(node.path) == mainFileName:
+						mainFilePBXNode = node
+						break
+		if mainFilePBXNode:
+			parentGroup = self.xcproj.parentObjectForNode(mainFilePBXNode.guid)
+			if not parentGroup:
+				Logger().error('Can not fine the group node for "main.m" in target: %s' % target)
+				sys.exit(1)
+			absPath = self.xcproj.absolutePathForNode(parentGroup)
+			if not os.path.isdir(absPath):
+				Logger().error('path:"%s" for group:%s is not a directory.' % (absPath, parentGroup.name))
+				sys.exit(1)
+			outputDir = os.path.abspath(os.path.join(absPath, outputDirName))
+			if not os.path.isdir(outputDir):
+				try:
+					os.makedirs(outputDir)
+				except Exception, e:
+					Logger().error('Can not create output directory: "%s"; error:%s' % (outputDir, e))
+					sys.exit(1)
+			children = filter(
+					lambda node: node.isaConfirmsTo('PBXGroup') and self.xcproj.absolutePathForNode(node) == outputDir and node.name == outputDirName, parentGroup.children)
+			groupNode = None
+			if len(children) > 1:
+				Logger().warn('Duplicated output groups found, try to remove unnecessary items.')
+				while len(children) > 1:
+					self.xcproj.removeGroup(children[-1].guid)
+				groupNode = children[0]
+			elif len(children) == 1:
+				groupNode = children[0]
+			else:
+				groupNode = addGroup(None, parentGroup.guid)
+				groupNode.name = outputDirName
+			self.xcproj.writeToFile()
 
-		if not headerOutfile:
-			headerOutfile = 'auto_gen/%s.h' % outfileName
-		if not sourceOutfile:
-			sourceOutfile = 'auto_gen/%s.m' % outfileName
+				
 
-		outpath = os.path.dirname(os.path.join(self.xcproj.projectHome, headerOutfile))
-		if not os.path.isdir(outpath):
-			os.makedirs(outpath)
-		outpath = os.path.dirname(os.path.join(self.xcproj.projectHome, sourceOutfile))
-		if not os.path.isdir(outpath):
-			os.makedirs(outpath)
-		return headerOutfile, sourceOutfile
+	# def _prepareResourceOutfiles(self, resourceName, bundleName='main'):
+	# 	outfileName = self._outfileName(resourceName, bundleName)
+	# 	# headerOutfile = self._fileInProjectWithName('%s.h' % outfileName)
+	# 	# sourceOutfile = self._fileInProjectWithName('%s.m' % outfileName)
+
+	# 	# headerOutfile = headerOutfile['full_path'] if headerOutfile else None
+	# 	# sourceOutfile = sourceOutfile['full_path'] if sourceOutfile else None
+
+	# 	# if not headerOutfile:
+	# 	# 	headerOutfile = 'auto_gen/%s.h' % outfileName
+	# 	# if not sourceOutfile:
+	# 	# 	sourceOutfile = 'auto_gen/%s.m' % outfileName
+
+	# 	# outpath = os.path.dirname(os.path.join(self.xcproj.projectHome, headerOutfile))
+	# 	# if not os.path.isdir(outpath):
+	# 	# 	os.makedirs(outpath)
+	# 	# outpath = os.path.dirname(os.path.join(self.xcproj.projectHome, sourceOutfile))
+	# 	# if not os.path.isdir(outpath):
+	# 	# 	os.makedirs(outpath)
+	# 	# return headerOutfile, sourceOutfile
 
 	def _outfileName(self, resourceName='', bundleName='main'):
 		if len(bundleName) == 0:
-			Logger().error('Invalid argument:"bundleName"')
-			sys.exit(1)
-
+			bundleName = 'main'
 		if resourceName == '':
-			return 'AppResources' if bundleName.lower() == 'main' else 'Res_%s' % bundleName.title()
+			return 'AppResources' if bundleName.lower() == 'main' else '%s.Resources' % bundleName.title()
 
-		fileName = 'Res_%s' % resourceName if bundleName == 'main' else 'Res_%s_%s' % (bundleName, resourceName)
-		return fileName.title()
+		return '%s.%s' % (bundleName.title(), resourceName.title())
 
-	def _fileInProjectWithName(self, name):
-		objs = self.xcproj.getfiles(args={'path': name})
-		return objs[0] if len(objs) > 0 else None
+	# def _fileInProjectWithName(self, name):
+	# 	objs = self.xcproj.getfiles(args={'path': name})
+	# 	return objs[0] if len(objs) > 0 else None
 
 
 if __name__ == "__main__":
