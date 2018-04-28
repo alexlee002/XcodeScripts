@@ -21,14 +21,29 @@ def isstr(obj):
     """ return True if 'obj' is str/unicode """
     return isinstance(obj, unicode) or isinstance(obj, str)
 
+def to_unicode(val):
+    """ safely convert an object to unicode """
+    return val if isinstance(val, unicode) else str(val).decode('utf-8')
 
-def get_dict_val(dic, key, dftval=None):
-    """ return value for 'key' in 'dic', or None if no such key """
-    return dic[key] if key in dic else dftval
 
-def get_list_item(l, pos, dftval=None):
+# def get_dict_val(dic, key, dftval=None):
+#     """ return value for 'key' in 'dic', or None if no such key """
+#     return dic[key] if key in dic else dftval
+
+def get_list_item(l, pos, default=None):
     """ return array item at index 'pos' """
-    return l[pos] if pos < len(l) else dftval
+    return l[pos] if pos < len(l) else default
+
+def remove_list_item(l, item, remove_all=False):
+    """ remove item from list, if exists. """
+    idx = 0
+    while idx < len(l):
+        if l[idx] == item:
+            l.pop(idx)
+            if not remove_all:
+                break
+        else:
+            idx += 1
 
 def take(func, l, s=1):
     """ take first 's' items from sequence 'l' with filter 'func' """
@@ -63,13 +78,9 @@ def hassubfix(string, subfix):
         return False
     return string[(len(string) - len(subfix)):] == subfix
 
-def issubpath(parent, subpath):
-    """ return True if 'subpath' is subpath of 'parent' """
-    import os
-    
-    parent = os.path.normpath(parent)
-    subpath = os.path.normpath(subpath)
-    return hasprefix(subpath, parent + os.sep)
+
+def exception_msg(ex):
+    return u'{0}:{1!r}'.format(type(ex).__name__, ex.args)
 
 
 def callerinfo(framenum=1, shortfilename=True):

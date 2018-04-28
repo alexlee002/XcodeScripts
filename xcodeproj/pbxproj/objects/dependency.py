@@ -26,27 +26,26 @@ class PBXTargetDependency(baseobject.PBXBaseObject):
 
     def __setattr__(self, name, value): 
         if name == u'pbx_targetProxy':
-            pbxhelper.set_pbxobj_value(self, PBXTargetDependency, name, value, \
-                lambda o:isinstance(o, baseobject.PBXBaseObject) \
-                and o.isa == u'PBXContainerItemProxy')
+            pbxhelper.pbxobj_set_pbxobj_attr(self, PBXTargetDependency, name, value, \
+                self.is_valid_target_proxy)
         elif name == u'pbx_target':
-            from xcodeproj.pbxproj.objects import target
-            pbxhelper.set_pbxobj_value(self, PBXTargetDependency, name, value, \
-                lambda o:isinstance(o, target.PBXTarget))
+            pbxhelper.pbxobj_set_pbxobj_attr(self, PBXTargetDependency, name, value, \
+                self.is_valid_target)
         else:
             super(PBXTargetDependency, self).__setattr__(name, value)
+
+    def is_valid_target_proxy(self, obj):
+        """ attr validator """
+        return isinstance(obj, baseobject.PBXBaseObject) and obj.isa == u'PBXContainerItemProxy'
+
+    def is_valid_target(self, obj):
+        """ attr validator """
+        from xcodeproj.pbxproj.objects import target
+        return isinstance(obj, target.PBXTarget)
 
     def comment(self):
         """ override """
         return self.isa
-
-    def duplicate(self):
-        """ override """
-        obj = super(PBXTargetDependency, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
 
     def _accepted_owner(self, obj):
         """ override """
@@ -57,6 +56,12 @@ class PBXTargetDependency(baseobject.PBXBaseObject):
         """ override """
         return False
 
+    def _duplicate_attr(self, attr, val):
+        if attr == u'pbx_targetProxy':
+            self.pbx_targetProxy = val.duplicate()
+
     def _validate(self):
-        pbxhelper.validate_dependent_object(self, u'pbx_targetProxy', throw_exception=True)
+        pbxhelper.pbxobj_validate_pbxobj_attr(self, u'pbx_targetProxy', throw_exception=True)
+        if not self.pbx_target is None:
+            pbxhelper.pbxobj_validate_pbxobj_attr(self, u'pbx_target', throw_exception=True)
         return super(PBXTargetDependency, self)._validate()

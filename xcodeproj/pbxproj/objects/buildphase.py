@@ -13,6 +13,7 @@ if os.path.isdir(ModuleRoot) and not ModuleRoot in sys.path:
 from xcodeproj.pbxproj import baseobject
 from xcodeproj.pbxproj import pbxhelper
 from xcodeproj.utils import logger
+from xcodeproj.utils import func
 
 class PBXBuildPhase(baseobject.PBXBaseObject):
     """ 
@@ -36,24 +37,25 @@ class PBXBuildPhase(baseobject.PBXBaseObject):
 
     def __setattr__(self, name, value):
         if name == u'pbx_files':
-            pbxhelper.set_pbxobj_list_value(self, PBXBuildPhase, name, value, self.is_valid_buildfile)
+            pbxhelper.pbxobj_set_pbxlist_attr(self, PBXBuildPhase, name, value, \
+                self.is_valid_buildfile)
         else:
-            super(PBXBuildPhase, self).__setattr__(name, value)
+            super(PBXBuildPhase, self).__setattr__(name, value)        
 
     def comment(self):
         """ override """
-        return self.pbx_name
+        return self.displayname()
 
-    def duplicate(self):
-        """ override """
-        obj = super(PBXBuildPhase, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if attr == u'pbx_files':
-                for bf in val:
-                    obj.addfile(bf.duplicate())
-            elif func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
+    def displayname(self):
+        """ build phase's name, should be uniqued """
+        self.pbx_name
+
+    def _duplicate_attr(self, attr, val):
+        if attr == u'pbx_files':
+            for bf in val:
+                obj.addfile(bf.duplicate())
+        else:
+            super(PBXBuildPhase, self)._duplicate_attr(attr, val)
 
     def allow_multi_owners(self):
         """ override """
@@ -63,6 +65,7 @@ class PBXBuildPhase(baseobject.PBXBaseObject):
         return isinstance(obj, PBXTarget) and obj.hasphase(self)
 
     def is_valid_buildfile(self, buildfile):
+        """ build file validator """
         return isinstance(buildfile, baseobject.PBXBaseObject) and buildfile.isa == u'PBXBuildFile'
 
     def hasfile(self, buildfile):
@@ -70,48 +73,59 @@ class PBXBuildPhase(baseobject.PBXBaseObject):
         return True if contains buildfile 
         :param  buildfile   guid or buildfile object
         """
-        return pbxhelper.pbxobj_has_list_value(self, u'pbx_files', buildfile, \
+        return pbxhelper.pbxobj_has_pbxlist_value(self, u'pbx_files', buildfile, \
             self.is_valid_buildfile)
+
+    def add_file_reference(self, fileref, **kwargs): # kwargs=settings
+        existsbf = None
+        for bf in self.pbx_files:
+            oldref = bf.pbx_fileRef
+            if oldref is None:
+                continue
+            if oldref == fileref or \
+                oldref.isa == fileref.isa and oldref.realpath() == fileref.realpath():
+                existsbf = bf
+                break
+        if not existsbf is None:
+            if u'settings' in kwargs:
+                existsbf.pbx_settings = kwargs.get(u'settings')
+            return existsbf
+
+        from xcodeproj.pbxproj.objects import buildfile
+        bf = buildfile.PBXBuildFile.new_buildfile(fileref)
+        if u'settings' in kwargs:
+            bf.pbx_settings = kwargs.get(u'settings')
+        self.addfile(bf)
+        return bf
 
     def addfile(self, buildfile, index=None):
         """ add buildfile to this phase """
-        pbxhelper.pbxobj_add_list_value(self, u'pbx_files', buildfile, self.is_valid_buildfile, \
-            index=index)
+        # if len(func.take(lambda o: o.realpath() == buildfile.realpath() and o.isa == buildfile.isa,\
+        #     self.pbx_files)) == 0:
+        pbxhelper.pbxobj_add_pbxlist_value(self, u'pbx_files', buildfile, \
+            self.is_valid_buildfile, index=index)
 
     def removefile(self, buildfile):
         """ 
         remove buildfile 
         :param buildfile    buildfile object or guid to be removed
         """
-        pbxhelper.pbxobj_remove_list_value(self, u'pbx_files', buildfile, self.is_valid_buildfile)
+        pbxhelper.pbxobj_remove_pbxlist_value(self, u'pbx_files', buildfile, self.is_valid_buildfile)
+
+    def remove_all_files(self):
+        """ remove all build files """
+        self.pbx_files = []
 
     def _validate_files(self, resolved, issues):
-        path_dict = dict() # {realpath: obj}
-        for obj in list(self.pbx_files):
-            try:
-                obj.validate()
-            except Exception as e:
-                if obj is None or isinstance(e, baseobject.PBXValidationError):
-                    self.removefile(obj)
-                    resolved.append(u'remove invalid buildfile {0}: {1}'.format(obj, e))
-                    continue
-                else:
-                    raise
+        pbxhelper.pbxobj_validate_pbxlist_attr(\
+            self, u'pbx_files', self.is_valid_buildfile, resolved=resolved, issues=issues)
 
-            realpath = obj.realpath()
-            if not realpath in path_dict:
-                path_dict[realpath] = [obj]
-            else:
-                path_dict[realpath].append(obj)
+        def __deduplicate_action(reserved, delitem):
+            self.removefile(delitem)
+            reserved.replace(delitem)
 
-        for path, objs in path_dict.items():
-            if len(objs) > 1:
-                removingobjs = objs if path is None else objs[1:]
-                for obj in removingobjs:
-                    self.removefile(obj)
-                resolved.append(\
-                    u'remove duplicate buildfile of path "{path}"\n\t{objs}'\
-                    .format(path=path, objs=u'\n\t'.join([str(o) for o in removingobjs])))
+        pbxhelper.pbxobj_deduplicate_pbxlist_value(self, u'pbx_files', lambda f: f.realpath(), \
+            __deduplicate_action, resolved, issues)
 
     def _validate(self):
         """ override """
@@ -126,34 +140,34 @@ class PBXCopyFilesBuildPhase(PBXBuildPhase):
         self.pbx_dstPath = u'' # str
         self.pbx_dstSubfolderSpec = 0 # int
 
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'CopyFiles'
 
 class PBXFrameworksBuildPhase(PBXBuildPhase):
 
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'Frameworks'
 
 
 class PBXHeadersBuildPhase(PBXBuildPhase):
 
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'Headers'
 
 
 class PBXResourcesBuildPhase(PBXBuildPhase):
 
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'Resources'
 
 
 class PBXSourcesBuildPhase(PBXBuildPhase):
     
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'Sources'
 
@@ -166,7 +180,7 @@ class PBXShellScriptBuildPhase(PBXBuildPhase):
         self.pbx_shellPath = u'/bin/sh' # str
         self.pbx_shellScript = u'' # str
 
-    def comment(self):
+    def displayname(self):
         """ override """
         return self.pbx_name if not self.pbx_name is None else u'ShellScript'
 

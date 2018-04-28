@@ -12,6 +12,7 @@ if os.path.isdir(ModuleRoot) and not ModuleRoot in sys.path:
 from xcodeproj.pbxproj import baseobject
 from xcodeproj.pbxproj import pbxpath
 from xcodeproj.pbxproj import pbxhelper
+from xcodeproj.pbxproj import attr
 from xcodeproj.utils import func
 
 class PBXBuildFile(baseobject.PBXBaseObject):
@@ -23,12 +24,20 @@ class PBXBuildFile(baseobject.PBXBaseObject):
 
     pbx-attr:
         fileRef         allow_fileref_types(), nonnull
-        Settings        dict, nullable
+        settings        dict, nullable
     """
+    @staticmethod
+    def new_buildfile(fileref, **kwargs): # kwargs:settings
+        obj = fileref.project().new_object(u'PBXBuildFile')
+        obj.pbx_fileRef = fileref
+        if u'settings' in kwargs:
+            obj.pbx_settings = kwargs[u'settings']
+        return obj
+
 
     def __setattr__(self, name, value):
         if name == u'pbx_fileRef':
-            pbxhelper.set_pbxobj_value(self, PBXBuildFile, name, value, self.is_valid_fileref)
+            pbxhelper.pbxobj_set_pbxobj_attr(self, PBXBuildFile, name, value, self.is_valid_fileref)
         elif name == u'pbx_settings':
             self.__set_settings(value)
         else:
@@ -39,7 +48,6 @@ class PBXBuildFile(baseobject.PBXBaseObject):
             super(PBXBuildFile, self).__setattr__(u'pbx_settings', value)
         else:
             logger.error(u'[PBXBuildFile] illegal settings:{0}'.format(obj))
-
 
     def allow_fileref_types(self):
         """ fileRef types """
@@ -53,16 +61,12 @@ class PBXBuildFile(baseobject.PBXBaseObject):
     def _print_in_one_line(self):
         return True
 
-    def duplicate(self):
-        """ override """
-        obj = super(PBXBuildFile, self).duplicate()
-        obj.pbx_fileRef = self.pbx_fileRef
-        obj.pbx_settings = self.pbx_settings
-        return obj
-
     def _validate(self):
-        pbxhelper.validate_dependent_object(self, u'pbx_fileRef', throw_exception=True)
+        pbxhelper.pbxobj_validate_pbxobj_attr(self, u'pbx_fileRef', throw_exception=True)
         return super(PBXBuildFile, self)._validate()
+
+    def displayname(self):
+        return self.pbx_fileRef.displayname() if not self.pbx_fileRef is None else None
 
     def comment(self):
         """ override """
@@ -71,13 +75,14 @@ class PBXBuildFile(baseobject.PBXBaseObject):
 
         if not self.pbx_fileRef is None:
             refcomment = self.pbx_fileRef.comment()
-        owner = func.get_list_item(self.owners(), 0)
+
+        owner = func.get_list_item(self.owners().values(), 0)
         if not owner is None:
             parentcomment = owner.comment()
 
         comment = u'{ref} in {parent}'.format(\
-            ref=(refcomment if not refcomment is None else u'(null)'), \
-            parent=(parentcomment if not parentcomment is None else u'(null)'))
+            ref=unicode(refcomment) if not refcomment is None else u'(null)', \
+            parent=unicode(parentcomment) if not parentcomment is None else u'(null)')
         return comment
 
     def _accepted_owner(self, obj):
@@ -102,8 +107,21 @@ class PBXBuildFile(baseobject.PBXBaseObject):
             return obj.realpath()
         return None
 
+    def filetype(self):
+        """ return filetype of buildfile's file reference """
+        if not self.pbx_fileRef is None \
+            and self.pbx_fileRef.isa in [u'PBXFileReference', u'PBXReferenceProxy']:
+            return self.pbx_fileRef.filetype()
+        return None
 
-
+    def equalto(self, other):
+        """ override """
+        if isinstance(other, PBXBuildFile):
+            if self.pbx_fileRef is None and other.pbx_fileRef is None:
+                return self.guid == other.guid
+            elif not self.pbx_fileRef is None and not other.pbx_fileRef is None:
+                return self.pbx_fileRef.equalto(other.pbx_fileRef)
+        return False
 
 
 

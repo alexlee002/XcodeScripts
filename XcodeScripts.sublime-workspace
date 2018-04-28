@@ -4,6 +4,10 @@
 		"selected_items":
 		[
 			[
+				"bak",
+				"bakup_file"
+			],
+			[
 				"pbxp",
 				"pbxprojfile"
 			],
@@ -276,10 +280,6 @@
 				"objects"
 			],
 			[
-				"bak",
-				"bakupfile"
-			],
-			[
 				"des",
 				"dest_file"
 			],
@@ -519,6 +519,15 @@
 	},
 	"buffers":
 	[
+		{
+			"file": "xcodeproj/pbxproj/pbxproj.py",
+			"settings":
+			{
+				"buffer_size": 14339,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		}
 	],
 	"build_system": "",
 	"build_system_choices":
@@ -569,6 +578,9 @@
 	},
 	"expanded_folders":
 	[
+		"/Users/alexlee/workspace/github/XcodeScripts/xcodeproj",
+		"/Users/alexlee/workspace/github/XcodeScripts/xcodeproj/pbxproj",
+		"/Users/alexlee/workspace/github/XcodeScripts/xcodeproj/utils"
 	],
 	"file_history":
 	[
@@ -634,8 +646,39 @@
 	"groups":
 	[
 		{
+			"selected": 0,
 			"sheets":
 			[
+				{
+					"buffer": 0,
+					"file": "xcodeproj/pbxproj/pbxproj.py",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 14339,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								13033,
+								13033
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Python/Python.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 5323.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				}
 			]
 		}
 	],

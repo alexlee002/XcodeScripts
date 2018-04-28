@@ -19,7 +19,7 @@ ENABLE_DEBUG = False
 LOG_LEVEL = level.VERBOSE
 ADAPTOR = adaptor.SHELL if os.getenv(u'PROJECT_DIR') is None else adaptor.XCODE
 
-def __log(lvl, msg, detail=False):
+def __logmsg(lvl, msg, detail=False):
     if lvl < LOG_LEVEL:
         return
 
@@ -29,33 +29,33 @@ def __log(lvl, msg, detail=False):
 
     if ADAPTOR == adaptor.SHELL:
         if lvl == level.VERBOSE:
-            msg = '\033[2m{0}\033[0m'.format(msg)
+            msg = '\033[2m-[V] {0}\033[0m'.format(msg)
         elif lvl == level.INFO:
-            msg = '\033[32m{0}\033[0m'.format(msg)
+            msg = '\033[32m-[I] {0}\033[0m'.format(msg)
         elif lvl == level.WARN:
-            msg = '\033[33m{0}\033[0m'.format(msg)
+            msg = '\033[33m-[W] {0}\033[0m'.format(msg)
         elif lvl == level.ERROR:
-            msg = '\033[1;31m{0}\033[0m'.format(msg)
+            msg = '\033[1;31m-[E] {0}\033[0m'.format(msg)
     else:
         if lvl == level.WARN:
             msg = 'warning: {0}'.format(msg)
         elif lvl == level.ERROR:
             msg = 'error: {0}'.format(msg)
 
-    print(msg)
+    return msg
 
 
 def verbose(msg):
-    __log(level.VERBOSE, msg, detail=ENABLE_DEBUG)
+    sys.stdout.writelines([__logmsg(level.VERBOSE, msg, detail=ENABLE_DEBUG), os.linesep])
 
 def info(msg):
-    __log(level.INFO, msg, detail=ENABLE_DEBUG)
+    sys.stdout.writelines([__logmsg(level.INFO, msg, detail=ENABLE_DEBUG), os.linesep])
 
 def warn(msg):
-    __log(level.WARN, msg, detail=ENABLE_DEBUG)
+    sys.stdout.writelines([__logmsg(level.WARN, msg, detail=ENABLE_DEBUG), os.linesep])
 
 def error(msg):
-    __log(level.ERROR, msg, detail=ENABLE_DEBUG)
+    sys.stderr.writelines([__logmsg(level.ERROR, msg, detail=ENABLE_DEBUG), os.linesep])
 
 
 

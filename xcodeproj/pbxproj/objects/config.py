@@ -13,7 +13,28 @@ from xcodeproj.pbxproj import baseobject
 from xcodeproj.pbxproj import pbxpath
 from xcodeproj.pbxproj import pbxhelper
 from xcodeproj.utils import func
+from xcodeproj.utils import logger
 
+
+ARRAY_SETTINGS = (
+    u'ALTERNATE_PERMISSIONS_FILES',
+    u'ARCHS',
+    u'BUILD_VARIANTS',
+    u'EXCLUDED_SOURCE_FILE_NAMES',
+    u'FRAMEWORK_SEARCH_PATHS',
+    u'GCC_PREPROCESSOR_DEFINITIONS',
+    u'GCC_PREPROCESSOR_DEFINITIONS_NOT_USED_IN_PRECOMPS',
+    u'HEADER_SEARCH_PATHS',
+    u'INFOPLIST_PREPROCESSOR_DEFINITIONS',
+    u'LIBRARY_SEARCH_PATHS',
+    u'OTHER_CFLAGS',
+    u'OTHER_CPLUSPLUSFLAGS',
+    u'OTHER_LDFLAGS',
+    u'REZ_SEARCH_PATHS',
+    u'SECTORDER_FLAGS',
+    u'WARNING_CFLAGS',
+    u'WARNING_LDFLAGS'
+)
 
 class XCBuildConfiguration(baseobject.PBXBaseObject):
     """
@@ -33,8 +54,8 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
 
     def __setattr__(self, name, value):
         if name == u'pbx_baseConfigurationReference':
-            pbxhelper.set_pbxobj_value(self, XCBuildConfiguration, name, value, \
-                lambda o:isinstance(o, baseobject.PBXBaseObject) and o.isa == 'PBXFileReference')
+            pbxhelper.pbxobj_set_pbxobj_attr(self, XCBuildConfiguration, name, value, \
+                self.is_valid_base_config_ref)
         elif name == u'pbx_buildSettings':
             self.__set_build_settings(value)
         else:
@@ -46,6 +67,10 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
         else:
             logger.error(u'{0} illegal buildSettings:{1}'.format(self, value))
 
+    def is_valid_base_config_ref(self, obj):
+        """ check if obj is valid baseConfigurationReference value """
+        return isinstance(obj, baseobject.PBXBaseObject) and obj.isa == 'PBXFileReference'
+
     def _accepted_owner(self, obj):
         """ override """
         return isinstance(obj, baseobject.PBXBaseObject) \
@@ -55,21 +80,13 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
         """ override """
         return True
 
-    def duplicate(self):
-        """ override """
-        obj = super(XCBuildConfiguration, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
-
     def comment(self):
         """ override """
         return self.pbx_name
 
-    def get_build_setting(self, name, dftval=None):
+    def get_build_setting(self, name, default=None):
         """ return build setting for 'name' """
-        return func.get_dict_val(self.pbx_buildSettings, name, dftval)
+        return self.pbx_buildSettings.get(name, default)
 
     def set_build_setting(self, name, value):
         """ set setting value for 'name' """
@@ -80,7 +97,7 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
         else:
             self.pbx_buildSettings[name] = value
 
-    def add_str_build_setting(self, name, value, seperator=' '):
+    def add_str_build_settings(self, name, value, seperator=' '):
         """
         add values to an existed settings. If the value is already exists, ignore.
         The value of setting is a str, eg: 
@@ -105,7 +122,7 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
         elif not value is None:
             arr = [str(value)]
 
-        settingval = self.get_build_setting(name, dftval='')
+        settingval = self.get_build_setting(name, default='')
         for v in arr:
             if v is None:
                 continue
@@ -149,7 +166,7 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
         @param name     the setting name
         @param value    str or [str]
         """
-        settingval = self.get_build_setting(name, dftval=[])
+        settingval = self.get_build_setting(name, default=[])
 
         arr = []
         if func.isseq(value):
@@ -189,8 +206,8 @@ class XCBuildConfiguration(baseobject.PBXBaseObject):
             normpath = path
             while func.hasprefix(normpath, '"') and func.hassubfix(normpath, '"'):
                 normpath = normpath[1: len(normpath)-1]
-            normpath = pbxpath.normalize_abspath(normpath)
-            realpath = pbxpath.realpath(self._xcproj, normpath)
+            normpath = pbxpath.normalize_path(normpath)
+            realpath = pbxpath.realpath(self.project(), normpath)
 
             if realpath in path_dict:
                 continue
@@ -239,8 +256,8 @@ class XCConfigurationList(baseobject.PBXBaseObject):
         self.pbx_defaultConfigurationIsVisible = 0 # int
 
     def __setattr__(self, name, value):
-        if name == 'pbx_buildConfigurations':
-            pbxhelper.set_pbxobj_list_value(self, XCConfigurationList, name, value, \
+        if name == u'pbx_buildConfigurations':
+            pbxhelper.pbxobj_set_pbxlist_attr(self, XCConfigurationList, name, value, \
                 self.is_valid_config)
         else:
             super(XCConfigurationList, self).__setattr__(name, value)
@@ -258,13 +275,14 @@ class XCConfigurationList(baseobject.PBXBaseObject):
 
     def comment(self):
         """ override """
-        owner = func.get_list_item(self.owners(), 0)
-        projname = owner.displayname() if not owner is None else None
+        owner = func.get_list_item(self.owners().values(), 0)
+        projname = owner.displayname().encode('utf-8') if not owner is None else None
         return u'Build configuration list for {isa} "{name}"'.format(\
                     isa=u'(null)' if owner is None else owner.isa, \
                     name=u'(null)' if projname is None else projname)  
 
     def is_valid_config(self, config):
+        """ check if 'config' is valid build configuration """
         return isinstance(config, XCBuildConfiguration)
 
     def _accepted_owner(self, obj):
@@ -274,36 +292,68 @@ class XCConfigurationList(baseobject.PBXBaseObject):
         """ override """
         return False
 
-    def accepted_owner(self, owner):
-        """ return true if 'owner' can be accepted as owner of self """
-        for t in [project.PBXProject, target.PBXTarget]:
-            if isinstance(owner, t):
-                return True
-        return False
-
     def _validate(self):
         resolved, issues = super(XCConfigurationList, self)._validate()
-        for obj in list(self.pbx_buildConfigurations):
-            try:
-                obj.validate()
-            except Exception as e:
-                if isinstance(e, baseobject.PBXValidationError):
-                    self.remove_build_config(obj)
-                    resolved.append(u'remove invalid buildfile {0}; reason: {1}'.format(obj, e))
-                    continue
-                else:
-                    raise
+
+        pbxhelper.pbxobj_validate_pbxlist_attr(self, u'pbx_buildConfigurations', \
+            self.is_valid_config, resolved=resolved, issues=issues)
+
+        import itertools
+        configs = sorted(self.pbx_buildConfigurations, key=lambda c: c.pbx_name)
+        configs = itertools.groupby(configs, lambda c: c.pbx_name)
+        for key, lst in configs:
+            lst = list(lst)
+            if len(lst) > 1:
+                issues.append(u'duplicate config "{n}" found:\n\t{cfgs}'
+                    .format(n=key, cfgs=u'\n\t'.join([str(o) for o in lst])))
+
         return resolved, issues
 
-    def add_build_config(self, config, index=None):
+    def defaultConfiguration(self):
+        """ 
+        return build-configuration specified by defaultConfigurationName 
+        or return the first one in configuration list
+        """
+        config = None
+        if not self.pbx_defaultConfigurationName is None:
+            config = self.getconfig(self.pbx_defaultConfigurationName)
+        if config is None:
+            config = func.get_list_item(self.pbx_buildConfigurations, 0)
+        return config
+
+    def getconfig(self, name, auto_create=False):
+        """ return config with name, otherwise return None """
+        if name is None:
+            return None
+
+        config = func.get_list_item(\
+            func.take(lambda c: c.pbx_name == name, self.pbx_buildConfigurations), 0)
+        if config is None and auto_create:
+            config = self.project().new_object(u'XCBuildConfiguration')
+            config.pbx_name = name
+            self.addconfig(config)
+        return config
+
+    def addconfig(self, config, index=None):
         """
         add config to list
         """
-        pbxhelper.pbxobj_add_list_value(self, u'pbx_buildConfigurations', config, \
+        pbxhelper.pbxobj_add_pbxlist_value(self, u'pbx_buildConfigurations', config, \
             self.is_valid_config, index=index)
 
-    def remove_build_config(self, config):
+    def removeconfig(self, config=None, name=None):
         """ remove config from list """
-        pbxhelper.pbxobj_remove_list_value(self, u'pbx_buildConfigurations', config, \
-            self.is_valid_config)
+        if not config is None:
+            pbxhelper.pbxobj_remove_pbxlist_value(self, u'pbx_buildConfigurations', config, \
+                self.is_valid_config)
+        elif not name is None:
+            idx = 0
+            while idx < len(self.pbx_buildConfigurations):
+                cfg = self.pbx_buildConfigurations[idx]
+                if cfg.pbx_name == name:
+                    self.pbx_buildConfigurations.pop(idx)
+                    cfg.remove_referrer(self)
+                else:
+                    idx += 1
+
 

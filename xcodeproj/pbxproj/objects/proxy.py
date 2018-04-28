@@ -31,7 +31,7 @@ class PBXContainerItemProxy(baseobject.PBXBaseObject):
 
     def __setattr__(self, name, value):
         if name == u'pbx_containerPortal':
-            pbxhelper.set_pbxobj_value(self, PBXContainerItemProxy, name, value, \
+            pbxhelper.pbxobj_set_pbxobj_attr(self, PBXContainerItemProxy, name, value, \
                 lambda o: isinstance(o, baseobject.PBXBaseObject)\
                 and o.isa in [u'PBXProject', u'PBXFileReference'])
         elif name == u'pbx_remoteGlobalIDString':
@@ -50,23 +50,16 @@ class PBXContainerItemProxy(baseobject.PBXBaseObject):
             return True
         return False
 
-    def duplicate(self):
-        """ override """
-        obj = super(PBXContainerItemProxy, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
-
     def comment(self):
         """ override """
         return self.isa
 
     def allow_multi_owners(self):
+        """ override """
         return False
 
     def _validate(self):
-        if self.pbx_containerPortal != self._xcproj.pbx_rootObject:
-            pbxhelper.validate_dependent_object(self, u'pbx_containerPortal', throw_exception=True)
+        if self.pbx_containerPortal != self.project().pbx_rootObject:
+            pbxhelper.pbxobj_validate_pbxobj_attr(self, u'pbx_containerPortal', throw_exception=True)
         return super(PBXContainerItemProxy, self)._validate()
 

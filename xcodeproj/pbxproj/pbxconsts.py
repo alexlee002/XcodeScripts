@@ -12,41 +12,71 @@ if os.path.isdir(ModuleRoot) and not ModuleRoot in sys.path:
 from xcodeproj.utils import template
 
 REFID_LEN = 24
+ARCHIVE_VERSION = 1
+OBJECT_VERSION = 50 # xcode 9.3
 
 PBX_ATTR_PREFIX = u'pbx_'
 
 SOURCE_TREE = template.enum(
-    group = u'<group>',
-    absolute = u'<absolute>',
-    SOURCE_ROOT = u'SOURCE_ROOT',
-    DEVELOPER_DIR = u'DEVELOPER_DIR',
-    BUILT_PRODUCTS_DIR = u'BUILT_PRODUCTS_DIR',
-    SDKROOT = u'SDKROOT',
+    group           = u'<group>',
+    absolute        = u'<absolute>',
+    source_root     = u'SOURCE_ROOT',
+    developer_dir   = u'DEVELOPER_DIR',
+    built_products_dir = u'BUILT_PRODUCTS_DIR',
+    sdkroot         = u'SDKROOT',
 )
 
-SOURCE_TREE_VALUES = set([
+SOURCE_TREE_VALUES = (
     SOURCE_TREE.group,
     SOURCE_TREE.absolute,
-    SOURCE_TREE.SOURCE_ROOT,
-    SOURCE_TREE.DEVELOPER_DIR,
-    SOURCE_TREE.BUILT_PRODUCTS_DIR,
-    SOURCE_TREE.SDKROOT,
-])
+    SOURCE_TREE.source_root,
+    SOURCE_TREE.developer_dir,
+    SOURCE_TREE.built_products_dir,
+    SOURCE_TREE.sdkroot,
+)
 
+CONFIG = template.enum (debug = u'Debug', release = u'Release')
 
-MIME_TO_FILETYPE = {
-    u'image/jpeg':       u'image.jpeg',
-    u'image/png':        u'image.png',
-    u'application/x-mach-binary':    u'archive.ar',
-    u'application/x-archive':        u'archive.ar',
-    u'text/plain':       u'text',
+PLATFORM = template.enum(
+    ios     = u'iOS',
+    osx     = u'OSX',
+    tvos    = u'tvOS',
+    watchos = u'watchOS',
+    coress_platform = u'coress_platform'
+)
+
+DEFAULT_DEPLOYMENT_TARGET = {
+    PLATFORM.ios:   u'8.0',
+    PLATFORM.osx:   u'10.12',
 }
 
-PRODUCT_FILE_TYPE = set([u'wrapper.application', 
+TARGET_PRODUCT_TYPE = template.enum(
+    app         = u'com.apple.product-type.application',
+    unit_test   = u'com.apple.product-type.bundle.unit-test',
+    app_extension = u'com.apple.product-type.app-extension',
+    static_lib  = u'com.apple.product-type.library.static',
+    dylib       = u'com.apple.product-type.library.dynamic',
+    framework   = u'com.apple.product-type.framework',
+    bundle      = u'com.apple.product-type.bundle',
+)
+
+LANGUAGE = template.enum(objc=u'Objective-C', swift=u'swift')
+
+MIME_TO_FILETYPE = {
+    u'image/jpeg':                  u'image.jpeg',
+    u'image/png':                   u'image.png',
+    u'application/x-mach-binary':   u'archive.ar',
+    u'application/x-archive':       u'archive.ar',
+    u'text/plain':                  u'text',
+    # u'application/octet-stream':    
+}
+
+PRODUCT_FILE_TYPE = (
+    u'wrapper.application', 
     u'wrapper.cfbundle', 
     u'wrapper.app-extension', 
     u'wrapper.framework', 
-    u'archive.ar'])
+    u'archive.ar')
 
 FILETYPE_BY_EXT = {
     u'.a'                    :u'archive.ar',
@@ -264,3 +294,30 @@ FILETYPE_BY_EXT = {
     u'.xpc'                  :u'wrapper.xpc-service',
 }
 
+FOLDER_FILE_TYPE = set([
+    u'file.storyboard',
+    u'file.uicatalog',
+    u'file.xib',
+    u'folder.assetcatalog',
+    u'folder.iconset',
+    u'folder.imagecatalog',
+    u'wrapper.app-extension',
+    u'wrapper.application',
+    u'wrapper.cfbundle',
+    u'wrapper.dsym',
+    u'wrapper.framework',
+    u'wrapper.htmld',
+    u'wrapper.installer-mpkg',
+    u'wrapper.installer-pkg',
+    u'wrapper.kernel-extension',
+    u'wrapper.nib',
+    u'wrapper.pb-project',
+    u'wrapper.pb-target',
+    u'wrapper.rtfd',
+    u'wrapper.scnassets',
+    u'wrapper.spotlight-importer',
+    u'wrapper.workspace',
+    u'wrapper.xcdatamodel',
+    u'wrapper.xcdatamodeld',
+    u'wrapper.xpc-service',
+])

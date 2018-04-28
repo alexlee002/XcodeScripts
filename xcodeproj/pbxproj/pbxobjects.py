@@ -33,6 +33,30 @@ class PBXObjects(abstract.PBXAbstract):
     def section_items(self):
         return self.__sections.items()
 
+    def get(self, key, default=None):
+        if pbxhelper.is_valid_guid(key):
+            return self.__objects.get(key, default)
+        return self.__sections.get(key, default)
+
+    def pop(self, key, default=None):
+        try:        
+            if pbxhelper.is_valid_guid(key):
+                obj = self.__objects.pop(key, default)
+                for sec in self.__sections.values():
+                    sec.pop(key, None)
+                return obj
+            else:
+                if key in self.__sections:
+                    dic = self.__sections[key]
+                    for guid, o in dic.items():
+                        self.__objects.pop(guid, None)
+                    return dic
+                else:
+                    return default
+        finally:
+            assert self.__validate()
+
+
     def __setitem__(self, key, value):
         assert isinstance(value, baseobject.PBXBaseObject)
 
@@ -47,21 +71,18 @@ class PBXObjects(abstract.PBXAbstract):
 
     def __getitem__(self, key):
         if pbxhelper.is_valid_guid(key):
-            return func.get_dict_val(self.__objects, key)
-        return func.get_dict_val(self.__sections, key)
+            return self.__objects[key]
+        return self.__sections[key]
 
     def __delitem__(self, key):
         if pbxhelper.is_valid_guid(key):
-            self.__objects.pop(key, None)
+            del self.__objects[key]
             for sec in self.__sections.values():
                 sec.pop(key, None)
         else:
-            objs = self.__sections.pop(key, None)
-            if objs is None:
-                raise KeyError('No such key: {0}'.format(key))
-            else:
-                for obj in objs:
-                    self.__objects.pop(obj.guid, None)
+            objs = self.__sections.pop(key)
+            for obj in objs:
+                self.__objects.pop(obj.guid, None)
         assert self.__validate()
 
     def __contains__(self, key):
@@ -80,14 +101,12 @@ class PBXObjects(abstract.PBXAbstract):
     def write(self, buff, identstr=u''):
         """ override """
         for isa, objsdict in sorted(self.__sections.items(), key=lambda o: o[0]):
-            buff.append(u'{sep}/* Begin {isa} section */{sep}'.format(isa=isa, sep=os.linesep))
+            self.safely_write(buff, u'{sep}/* Begin {isa} section */{sep}'\
+                .format(isa=isa, sep=os.linesep))
+
             for guid, obj in sorted(objsdict.items(), key=lambda o:o[0]):
                 obj.write(buff, identstr+u'\t')
-                buff.append(os.linesep)
-            buff.append(u'/* End {isa} section */{sep}'.format(isa=isa, sep=os.linesep))
+                self.safely_write(buff, u'{sep}'.format(sep=os.linesep))
+            
+            self.safely_write(buff, u'/* End {isa} section */{sep}'.format(isa=isa, sep=os.linesep))
 
-
-
-
-
-        

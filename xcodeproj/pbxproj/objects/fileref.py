@@ -44,6 +44,12 @@ class PBXFileReference(baseobject.PBXBaseObject):
         # self.__realpath = None # str, real path on disk
         self.__abspath = None # str, project relative path
 
+    def __setattr__(self, name, value):
+        if name == u'pbx_path':
+            pbxpath.set_group_file_path(self, PBXFileReference, value)
+        else:
+            super(PBXFileReference, self).__setattr__(name, value)
+
     def _accepted_owner(self, obj):
         """ override """
         from xcodeproj.pbxproj.objects import group
@@ -52,24 +58,13 @@ class PBXFileReference(baseobject.PBXBaseObject):
     def _print_in_one_line(self):
         return True
 
-    def duplicate(self):
-        """ 
-        override 
-        maybe fileReference can not be duplicated?
-        """
-        obj = super(PBXFileReference, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
-
     def filetype(self):
         """ return file type or None """
-        if not self.explicitFileType is None:
-            return self.explicitFileType
-        elif self.lastKnownFileType is None:
-            self.lastKnownFileType = pbxhelper.get_filetype(self.realpath())
-        return self.lastKnownFileType
+        if not self.pbx_explicitFileType is None:
+            return self.pbx_explicitFileType
+        elif self.pbx_lastKnownFileType is None:
+            self.pbx_lastKnownFileType = pbxhelper.get_filetype(self.realpath())
+        return self.pbx_lastKnownFileType
 
     def abspath(self):
         """ return path in project """
@@ -79,7 +74,7 @@ class PBXFileReference(baseobject.PBXBaseObject):
 
     def realpath(self):
         """ return path on disk """
-        return pbxpath.realpath(self._xcproj, self.abspath())
+        return pbxpath.realpath(self.project(), self.abspath())
 
     def displayname(self):
         """ return the name to displayed """
@@ -123,11 +118,15 @@ class PBXReferenceProxy(baseobject.PBXBaseObject):
 
     def __setattr__(self, name, value):
         if name == u'pbx_remoteRef':
-            pbxhelper.set_pbxobj_value(self, PBXReferenceProxy, name, value, \
-                lambda o: isinstance(o, baseobject.PBXBaseObject) \
-                and o.isa == 'PBXContainerItemProxy')
+            pbxhelper.pbxobj_set_pbxobj_attr(self, PBXReferenceProxy, name, value, \
+                self.is_valid_ref )
+        elif name == u'pbx_path':
+            pbxpath.set_group_file_path(self, PBXReferenceProxy, value)
         else:
             super(PBXReferenceProxy, self).__setattr__(name, value)
+
+    def is_valid_ref(self, obj):
+        return isinstance(obj, baseobject.PBXBaseObject) and obj.isa == 'PBXContainerItemProxy'
 
     def displayname(self):
         """ return the name to displayed """
@@ -141,14 +140,6 @@ class PBXReferenceProxy(baseobject.PBXBaseObject):
         from xcodeproj.pbxproj.objects import group
         return isinstance(obj, group.PBXGroup) and obj.haschild(self)
 
-    def duplicate(self):
-        """ override """
-        obj = super(PBXReferenceProxy, self).duplicate()
-        for attr, val in self.__dict__.items():
-            if func.hasprefix(attr, pbxconsts.PBX_ATTR_PREFIX):
-                setattr(obj, attr, val)
-        return obj
-
     def comment(self):
         """ override """
         return self.displayname()
@@ -161,7 +152,7 @@ class PBXReferenceProxy(baseobject.PBXBaseObject):
 
     def realpath(self):
         """ return path on disk """
-        return pbxpath.realpath(self._xcproj, self.abspath())
+        return pbxpath.realpath(self.project(), self.abspath())
 
     def filetype(self):
         return self.pbx_fileType
@@ -170,5 +161,5 @@ class PBXReferenceProxy(baseobject.PBXBaseObject):
         return False
 
     def _validate(self):
-        pbxhelper.validate_dependent_object(self, u'pbx_remoteRef', throw_exception=True)
+        pbxhelper.pbxobj_validate_pbxobj_attr(self, u'pbx_remoteRef', throw_exception=True)
         return super(PBXReferenceProxy, self)._validate()
